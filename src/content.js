@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.8.7-ai-first-cn";
+  const SCRIPT_VERSION = "0.9.0-memory-cn";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -36,6 +36,9 @@
   let autofillRunId = 0;
   let autofillProgressTimer = null;
   let autofillAiState = createAutofillAiState();
+  let currentLearnedQA = [];
+  let lastAutofillPlan = null;
+  let lastPendingFields = [];
 
   const CONTROL_SELECTOR = [
     'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"])',
@@ -2265,6 +2268,48 @@
         background: transparent;
         color: #0f6b4f;
       }
+      #${FLOAT_ID} .arf-float-pending {
+        margin-top: 10px;
+        border-top: 1px dashed rgba(38, 58, 44, 0.18);
+        padding-top: 8px;
+        max-height: 220px;
+        overflow-y: auto;
+      }
+      #${FLOAT_ID} .arf-float-pending-title {
+        font-size: 12px;
+        color: #6f6a60;
+        margin-bottom: 6px;
+      }
+      #${FLOAT_ID} .arf-float-pending-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+      }
+      #${FLOAT_ID} .arf-float-pending-label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+      #${FLOAT_ID} .arf-float-pending-row button {
+        flex-shrink: 0;
+        border: 1px solid #0f6b4f;
+        border-radius: 9px;
+        background: transparent;
+        color: #0f6b4f;
+        cursor: pointer;
+        font-size: 12px;
+        padding: 2px 10px;
+        min-height: 24px;
+      }
+      #${FLOAT_ID} .arf-float-pending-row button[disabled] {
+        border-color: #9aa39d;
+        color: #9aa39d;
+        cursor: default;
+      }
       #${PANEL_ID} {
         position: fixed;
         top: 8px;
@@ -2642,6 +2687,7 @@
         </div>
       </div>
       <div class="arf-float-chips" data-role="float-chips" hidden></div>
+      <div class="arf-float-pending" data-role="float-pending" hidden></div>
       <div class="arf-float-actions">
         <button type="button" data-action="float-detail">打开资料面板</button>
         <button class="secondary" type="button" data-action="float-clear">清除颜色标记</button>
@@ -2714,6 +2760,7 @@
         aiFlag.hidden = !modeBadge;
         aiFlag.textContent = modeBadge || "";
       }
+      renderPendingRememberList(floating);
       return;
     }
 
@@ -2738,6 +2785,130 @@
     if (aiFlag) {
       aiFlag.hidden = !modeBadge;
       aiFlag.textContent = modeBadge || "";
+    }
+    renderPendingRememberList(floating);
+  }
+
+  // ---- 问答记忆：待处理字段列表 + "记住"入口 ----
+
+  function isLearnedQuestion(label) {
+    const key = normalizeMatchKey(label || "");
+    return Boolean(key) && currentLearnedQA.some((qa) => qa && qa.normQuestion === key);
+  }
+
+  function renderPendingRememberList(floating) {
+    const box = floating.querySelector('[data-role="float-pending"]');
+    if (!box) {
+      return;
+    }
+    if (autofillProgress.active || !autofillSummary || lastPendingFields.length === 0) {
+      box.hidden = true;
+      box.textContent = "";
+      return;
+    }
+
+    box.hidden = false;
+    box.textContent = "";
+    const title = document.createElement("div");
+    title.className = "arf-float-pending-title";
+    title.textContent = "待处理字段：在页面上填好后点“记住”，下次开始填写会自动复用";
+    box.appendChild(title);
+
+    for (const item of lastPendingFields) {
+      const row = document.createElement("div");
+      row.className = "arf-float-pending-row";
+      const label = document.createElement("span");
+      label.className = "arf-float-pending-label";
+      label.title = item.label;
+      label.textContent = item.label;
+      const button = document.createElement("button");
+      button.type = "button";
+      const learned = isLearnedQuestion(item.label);
+      button.textContent = learned ? "已记住" : "记住";
+      button.disabled = learned;
+      button.addEventListener("click", () => {
+        void handleRememberPendingField(item, button);
+      });
+      row.append(label, button);
+      box.appendChild(row);
+    }
+  }
+
+  function readAnswerForLearn(element) {
+    if (!element) {
+      return "";
+    }
+    if (element instanceof HTMLInputElement && element.type === "radio") {
+      if (element.checked) {
+        return getChoiceLabelText(element);
+      }
+      if (element.name) {
+        const group = document.querySelectorAll(`input[type="radio"][name="${CSS.escape(element.name)}"]`);
+        for (const radio of group) {
+          if (radio.checked) {
+            return getChoiceLabelText(radio);
+          }
+        }
+      }
+      return "";
+    }
+    if (element instanceof HTMLInputElement && element.type === "checkbox") {
+      return element.checked ? (getChoiceLabelText(element) || "是") : "";
+    }
+    if (element instanceof HTMLSelectElement) {
+      const option = element.selectedOptions && element.selectedOptions[0];
+      return normalizeText(option ? (option.textContent || option.value) : element.value || "", 200);
+    }
+    return getControlCurrentValue(element);
+  }
+
+  async function handleRememberPendingField(item, button) {
+    if (!item || !button) {
+      return;
+    }
+    const scanField = lastAutofillPlan?.scan?.fields?.find((field) => field && field.fieldId === item.fieldId);
+    const element = scanField ? findFieldElement(scanField) : null;
+    const answer = element ? readAnswerForLearn(element) : "";
+    if (!answer) {
+      button.textContent = "请先在页面填写";
+      setTimeout(() => {
+        if (!button.disabled) {
+          button.textContent = "记住";
+        }
+      }, 1600);
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = "保存中...";
+    try {
+      const options = Array.isArray(scanField?.options)
+        ? scanField.options.map((opt) => opt?.label || opt?.value).filter(Boolean).slice(0, 40)
+        : [];
+      const fullLabel = normalizeText(scanField?.inferredLabel || (scanField ? inferFieldLabel(scanField) : "") || item.label, 280);
+      const response = await sendRuntimeMessage({
+        type: "OJAF_SAVE_LEARNED_QA",
+        payload: {
+          question: item.label,
+          normQuestion: normalizeMatchKey(fullLabel || item.label),
+          answer,
+          controlKind: item.type || scanField?.type || "",
+          options,
+          hostname: location.hostname || ""
+        }
+      });
+      const qa = response?.qa;
+      if (qa) {
+        currentLearnedQA = currentLearnedQA.filter((entry) => entry && entry.normQuestion !== qa.normQuestion).concat(qa);
+      }
+      button.textContent = "已记住 ✓";
+      setProfilePanelStatus(`已记住「${item.label}」，下次开始填写会自动复用。`);
+      // 答案已提升到 customSections["qa-memory"]，刷新本机资料让资料面板立即可见
+      void refreshCurrentProfile({ force: true });
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "记住";
+      setProfilePanelStatus(`记住失败：${error.message}`, true);
     }
   }
 
@@ -2926,6 +3097,7 @@
     currentProfileLoadPromise = (async () => {
       const settings = await sendRuntimeMessage({ type: "OJAF_GET_SETTINGS" });
       currentProfileV2 = settings.profileV2 || null;
+      currentLearnedQA = Array.isArray(settings.learnedQA) ? settings.learnedQA : [];
       return currentProfileV2;
     })();
 
@@ -5130,6 +5302,69 @@
     return Number(rightCandidate.score || 0) - Number(leftCandidate.score || 0);
   }
 
+  // ---- 问答记忆快车道：本地精确匹配已记住的答案，不调 AI、离线可用 ----
+
+  function createLearnedQACandidate(field, fieldLabel) {
+    if (!field || !field.canFill || currentLearnedQA.length === 0) {
+      return null;
+    }
+    if (field.type === "file" || field.type === "password") {
+      return null;
+    }
+    const key = normalizeMatchKey(fieldLabel || field.label || "");
+    if (!key || key.length < 2) {
+      return null;
+    }
+
+    const hostname = String(location.hostname || "").toLowerCase();
+    let best = null;
+    let bestRank = -1;
+    for (const qa of currentLearnedQA) {
+      if (!qa || !qa.answer || !qa.normQuestion) {
+        continue;
+      }
+      const qaKey = String(qa.normQuestion);
+      let matched = qaKey === key;
+      if (!matched && qaKey.length >= 4 && key.length >= 4 && (key.includes(qaKey) || qaKey.includes(key))) {
+        matched = true;
+      }
+      if (!matched) {
+        continue;
+      }
+      let rank = 1;
+      if (String(qa.hostname || "").toLowerCase() === hostname) {
+        rank += 2;
+      }
+      rank += Math.min(1, Number(qa.usedCount || 0) / 10);
+      if (rank > bestRank) {
+        best = qa;
+        bestRank = rank;
+      }
+    }
+    if (!best) {
+      return null;
+    }
+
+    const entry = {
+      label: best.question,
+      value: best.answer,
+      category: "问答记忆",
+      sectionKey: "qa-memory",
+      subsection: "",
+      aliases: [best.question],
+      hasValue: true,
+      itemId: `learnedQA.${best.id}`
+    };
+    const candidate = createAutofillCandidate(field, entry, 80);
+    if (!candidate || !candidate.value) {
+      return null;
+    }
+    candidate.mappingSource = "问答记忆";
+    candidate.reason = "来自你之前记住的答案";
+    candidate.learnedQAId = best.id;
+    return candidate;
+  }
+
   function buildAutofillPlan(scan) {
     const entries = getCurrentProfileEntries();
     const visibleFields = Array.isArray(scan?.fields) ? scan.fields.filter((field) => field && field.canFill) : [];
@@ -5172,6 +5407,10 @@
       }
 
       if (!bestEntry || bestScore < 18) {
+        const memoryCandidate = createLearnedQACandidate(field, fieldLabel);
+        if (memoryCandidate) {
+          candidates.push(memoryCandidate);
+        }
         continue;
       }
 
@@ -5470,6 +5709,8 @@
 
     try {
       clearMarks();
+      lastPendingFields = [];
+      lastAutofillPlan = null;
       setProfilePanelStatus("正在扫描页面并准备一键填写...");
       const planResult = await generateAutofillPlan({ runId, continueRun: true });
       if (!planResult?.ok) {
@@ -5494,6 +5735,7 @@
           message: "没有找到可自动填写的字段，橙色标记需要手动处理。",
           aiUsage
         };
+        rememberPendingContext(plan, []);
         setAutofillSummary(summary);
         updateAutofillDebugResults(summary, []);
         return {
@@ -5592,6 +5834,10 @@
         ok,
         note
       });
+
+      if (ok && candidate.learnedQAId) {
+        void sendRuntimeMessage({ type: "OJAF_TOUCH_LEARNED_QA", payload: { id: candidate.learnedQAId } }).catch(() => undefined);
+      }
     }
 
     const filledCount = results.filter((result) => result.ok).length;
@@ -5608,6 +5854,7 @@
       aiUsage: getAutofillAiSnapshot()
     };
     setProfilePanelStatus(`已自动填写 ${filledCount} 项，待处理 ${summary.pending} 项。`);
+    rememberPendingContext(plan, results);
     setAutofillSummary(summary);
     updateAutofillDebugResults(summary, results);
     await persistProfilePanelState(getProfilePanelStateSnapshot());
@@ -5648,6 +5895,51 @@
       }
     }
     return count;
+  }
+
+  // ---- 问答记忆：收集"本次填写后仍待处理"的字段，供浮动面板展示"记住"入口 ----
+
+  function rememberPendingContext(plan, results) {
+    lastAutofillPlan = plan || null;
+    lastPendingFields = collectPendingFields(plan, results);
+  }
+
+  function collectPendingFields(plan, results) {
+    const fields = Array.isArray(plan?.scan?.fields) ? plan.scan.fields : [];
+    if (fields.length === 0) {
+      return [];
+    }
+    const okFieldIds = new Set();
+    for (const result of Array.isArray(results) ? results : []) {
+      if (result?.ok && typeof result.id === "string") {
+        okFieldIds.add(result.id.replace(/^candidate_/, ""));
+      }
+    }
+
+    const pending = [];
+    for (const field of fields) {
+      if (!field || !field.canFill) {
+        continue;
+      }
+      if (okFieldIds.has(field.fieldId)) {
+        continue;
+      }
+      if (field.hasCurrentValue) {
+        continue;
+      }
+      if (field.type === "file" || field.type === "password") {
+        continue;
+      }
+      const label = normalizeText(field.inferredLabel || inferFieldLabel(field) || field.label || "", 80);
+      if (!label) {
+        continue;
+      }
+      pending.push({ fieldId: field.fieldId, label, type: field.type || "" });
+      if (pending.length >= 30) {
+        break;
+      }
+    }
+    return pending;
   }
 
   async function fillElementSmart(element, value, field, candidate) {

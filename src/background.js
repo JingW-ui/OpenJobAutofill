@@ -25,11 +25,15 @@ const DEFAULT_PROFILE_V2 = {
 const STORAGE_KEYS = {
   profileV2: "profileV2",
   apiConfig: "apiConfig",
-  updateState: "updateState"
+  updateState: "updateState",
+  learnedQA: "learnedQA"
 };
 
 const PROFILE_PANEL_STATE_KEY = "OJAF_PROFILE_PANEL_STATE";
 const MAX_PROFILE_PANEL_STATE_ITEMS = 20;
+const LEARNED_QA_SECTION_KEY = "qa-memory";
+const LEARNED_QA_SECTION_TITLE = "问答记忆";
+const MAX_LEARNED_QA = 300;
 const UPDATE_ALARM_NAME = "OJAF_CHECK_RELEASE_UPDATE";
 const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
 const UPDATE_REPOSITORY = "Br1an67/OpenJobAutofill";
@@ -114,6 +118,14 @@ async function handleMessage(message) {
       return saveProfilePanelState(message.payload || {});
     case "OJAF_GET_PROFILE_PANEL_STATE":
       return getProfilePanelState(message.payload || {});
+    case "OJAF_LIST_LEARNED_QA":
+      return listLearnedQA();
+    case "OJAF_SAVE_LEARNED_QA":
+      return saveLearnedQA(message.payload || {});
+    case "OJAF_DELETE_LEARNED_QA":
+      return deleteLearnedQA(message.payload || {});
+    case "OJAF_TOUCH_LEARNED_QA":
+      return touchLearnedQA(message.payload || {});
     case "OJAF_LIST_MODELS":
       return listModels(message.payload || {});
     case "OJAF_TEST_CONNECTION":
@@ -132,11 +144,13 @@ async function handleMessage(message) {
 async function getSettings() {
   const values = await chrome.storage.local.get([
     STORAGE_KEYS.profileV2,
-    STORAGE_KEYS.apiConfig
+    STORAGE_KEYS.apiConfig,
+    STORAGE_KEYS.learnedQA
   ]);
   return {
     profileV2: normalizeProfileV2(values[STORAGE_KEYS.profileV2] || DEFAULT_PROFILE_V2),
-    apiConfig: { ...DEFAULT_API_CONFIG, ...(values[STORAGE_KEYS.apiConfig] || {}) }
+    apiConfig: { ...DEFAULT_API_CONFIG, ...(values[STORAGE_KEYS.apiConfig] || {}) },
+    learnedQA: Array.isArray(values[STORAGE_KEYS.learnedQA]) ? values[STORAGE_KEYS.learnedQA] : []
   };
 }
 
@@ -145,6 +159,20 @@ async function saveSettings(payload) {
 
   if (payload.profileV2) {
     next[STORAGE_KEYS.profileV2] = normalizeProfileV2(payload.profileV2);
+
+    // 问答记忆一致性：在设置页删除/改名后，同步清理 learnedQA 元数据，防止快车道继续命中已删除的答案
+    const items = await listLearnedQA();
+    if (items.length > 0) {
+      const section = next[STORAGE_KEYS.profileV2].customSections.find(
+        (entry) => entry && entry.key === LEARNED_QA_SECTION_KEY
+      );
+      const kept = items.filter(
+        (qa) => section && section.values && Object.prototype.hasOwnProperty.call(section.values, qa?.question)
+      );
+      if (kept.length !== items.length) {
+        next[STORAGE_KEYS.learnedQA] = kept;
+      }
+    }
   }
 
   if (payload.apiConfig) {
@@ -158,6 +186,126 @@ async function saveSettings(payload) {
 async function clearSettings() {
   await chrome.storage.local.clear();
   return { cleared: true };
+}
+
+// ---- 问答记忆：把"简历里没有、手动填过一次"的答案持久化，并提升到 customSections 让既有匹配链路自动复用 ----
+
+async function listLearnedQA() {
+  const values = await chrome.storage.local.get([STORAGE_KEYS.learnedQA]);
+  const items = values[STORAGE_KEYS.learnedQA];
+  return Array.isArray(items) ? items : [];
+}
+
+async function saveLearnedQA(payload) {
+  const question = String(payload?.question ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+  const answer = String(payload?.answer ?? "").trim().slice(0, 500);
+  if (!question) {
+    throw new Error("记住失败：问题为空");
+  }
+  if (!answer) {
+    throw new Error("记住失败：答案为空，请先在页面上填写该字段");
+  }
+  const normQuestion = String(payload?.normQuestion || "").trim() || question;
+
+  const items = await listLearnedQA();
+  const now = Date.now();
+  let qa = normQuestion ? items.find((item) => item && item.normQuestion === normQuestion) : null;
+  if (qa) {
+    qa.question = question;
+    qa.answer = answer;
+    qa.controlKind = String(payload?.controlKind || qa.controlKind || "");
+    qa.options = Array.isArray(payload?.options) ? payload.options.slice(0, 40).map(String) : (qa.options || []);
+    qa.hostname = String(payload?.hostname || qa.hostname || "").slice(0, 120);
+    qa.updatedAt = now;
+    qa.promoted = true;
+  } else {
+    qa = {
+      id: `qa_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      question,
+      normQuestion,
+      answer,
+      controlKind: String(payload?.controlKind || ""),
+      options: Array.isArray(payload?.options) ? payload.options.slice(0, 40).map(String) : [],
+      hostname: String(payload?.hostname || "").slice(0, 120),
+      createdAt: now,
+      updatedAt: now,
+      usedCount: 0,
+      promoted: true
+    };
+    items.push(qa);
+  }
+
+  // 容量上限：超出时淘汰最久未更新的
+  items.sort((a, b) => Number(b?.updatedAt || 0) - Number(a?.updatedAt || 0));
+  const trimmed = items.slice(0, MAX_LEARNED_QA);
+
+  // 提升到 profileV2.customSections["qa-memory"]：该模块会自动进入资料目录，AI/本地匹配链路零改动复用
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.profileV2]);
+  const profileV2 = normalizeProfileV2(stored[STORAGE_KEYS.profileV2] || DEFAULT_PROFILE_V2);
+  let section = profileV2.customSections.find((entry) => entry && entry.key === LEARNED_QA_SECTION_KEY);
+  if (!section) {
+    section = {
+      key: LEARNED_QA_SECTION_KEY,
+      title: LEARNED_QA_SECTION_TITLE,
+      kind: "simple",
+      values: {},
+      custom: []
+    };
+    profileV2.customSections.push(section);
+  }
+  section.values[question] = answer;
+  profileV2.updatedAt = new Date(now).toISOString();
+
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.learnedQA]: trimmed,
+    [STORAGE_KEYS.profileV2]: normalizeProfileV2(profileV2)
+  });
+
+  return { saved: true, qa, learnedCount: trimmed.length };
+}
+
+async function deleteLearnedQA(payload) {
+  const id = String(payload?.id || "");
+  if (!id) {
+    throw new Error("缺少要删除的记忆 id");
+  }
+  const items = await listLearnedQA();
+  const target = items.find((item) => item && item.id === id);
+  const next = items.filter((item) => item && item.id !== id);
+
+  if (target) {
+    const stored = await chrome.storage.local.get([STORAGE_KEYS.profileV2]);
+    const profileV2 = normalizeProfileV2(stored[STORAGE_KEYS.profileV2] || DEFAULT_PROFILE_V2);
+    const section = profileV2.customSections.find((entry) => entry && entry.key === LEARNED_QA_SECTION_KEY);
+    if (section && section.values && Object.prototype.hasOwnProperty.call(section.values, target.question)) {
+      delete section.values[target.question];
+    }
+    profileV2.updatedAt = new Date().toISOString();
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.learnedQA]: next,
+      [STORAGE_KEYS.profileV2]: normalizeProfileV2(profileV2)
+    });
+  } else {
+    await chrome.storage.local.set({ [STORAGE_KEYS.learnedQA]: next });
+  }
+
+  return { deleted: Boolean(target), learnedCount: next.length };
+}
+
+async function touchLearnedQA(payload) {
+  const id = String(payload?.id || "");
+  if (!id) {
+    return { touched: false };
+  }
+  const items = await listLearnedQA();
+  const target = items.find((item) => item && item.id === id);
+  if (!target) {
+    return { touched: false };
+  }
+  target.usedCount = Number(target.usedCount || 0) + 1;
+  target.lastUsedAt = Date.now();
+  await chrome.storage.local.set({ [STORAGE_KEYS.learnedQA]: items });
+  return { touched: true };
 }
 
 async function setupUpdateAlarm() {

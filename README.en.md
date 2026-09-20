@@ -21,6 +21,7 @@ If this project saves you time, a GitHub Star would be appreciated. Issues and f
 - Optional OpenAI-compatible API or custom API support for better page-field understanding.
 - AI only helps identify page fields and matching profile-field names, not your actual resume values.
 - Autofill results use two color marks: green for filled fields and orange for fields that still need attention.
+- Q&A memory: after filling an orange pending field on the page, click "Remember" in the result panel. Answers stay local and join the profile catalog (the "Q&A memory" section in Settings supports view/edit/delete); later runs reuse them via local exact matching first, with AI semantic matching as fallback.
 - GitHub Release update checks are supported; the extension icon shows `NEW` when a newer release is available.
 
 ## Installation
