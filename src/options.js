@@ -19,6 +19,11 @@ const fields = {
   profileNav: document.getElementById("profileNav"),
   profileTips: document.getElementById("profileTips"),
   profileFileInput: document.getElementById("profileFileInput"),
+  resumeTextInput: document.getElementById("resumeTextInput"),
+  parseResumeTextButton: document.getElementById("parseResumeText"),
+  parseResumeFileButton: document.getElementById("parseResumeFile"),
+  resumeFileInput: document.getElementById("resumeFileInput"),
+  resumeParseStatus: document.getElementById("resumeParseStatus"),
   profileFeedback: document.getElementById("profileFeedback"),
   apiFeedback: document.getElementById("apiFeedback"),
   apiPreviewBox: document.getElementById("apiPreviewBox"),
@@ -491,6 +496,9 @@ fields.baseUrl.addEventListener("change", () => maybeAutoRefreshModelList());
 fields.customUrl.addEventListener("change", () => maybeAutoRefreshModelList());
 registerApiDirtyTracking();
 fields.profileFileInput.addEventListener("change", importProfileFromFile);
+fields.parseResumeTextButton?.addEventListener("click", importResumeFromText);
+fields.parseResumeFileButton?.addEventListener("click", () => fields.resumeFileInput?.click());
+fields.resumeFileInput?.addEventListener("change", importResumeFromFile);
 fields.profileSectionEditor.addEventListener("input", handleProfileEditorInput);
 fields.profileSectionEditor.addEventListener("focusin", handleProfileSectionFocus);
 fields.profileSectionEditor.addEventListener("click", handleStructuredProfileClick);
@@ -744,6 +752,246 @@ async function importProfileFromFile() {
   } finally {
     fields.profileFileInput.value = "";
   }
+}
+
+// ---- 简历解析导入：AI 把简历原文结构化为资料栏目，合并进编辑器人工复核 ----
+
+let resumeParseInFlight = false;
+
+async function importResumeFromText() {
+  const text = String(fields.resumeTextInput?.value || "").trim();
+  await runResumeParse(text);
+}
+
+async function importResumeFromFile() {
+  const file = fields.resumeFileInput?.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    const raw = await file.text();
+    const looksHtml =
+      /\.html?$/i.test(file.name || "") || /^\s*(<!doctype\s+html|<html[\s>])/i.test(raw.slice(0, 600));
+    const text = looksHtml ? extractTextFromHtml(raw) : raw;
+    await runResumeParse(text);
+  } catch (error) {
+    setResumeParseStatus(`解析失败：${error.message}`, true);
+  } finally {
+    if (fields.resumeFileInput) {
+      fields.resumeFileInput.value = "";
+    }
+  }
+}
+
+function extractTextFromHtml(htmlText) {
+  const doc = new DOMParser().parseFromString(String(htmlText || ""), "text/html");
+  doc.querySelectorAll("script,style,noscript,template,svg,head,iframe,object").forEach((el) => el.remove());
+  const BLOCK_TAGS = new Set([
+    "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "BR", "DD", "DETAILS", "DIV", "DL", "DT",
+    "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4", "H5", "H6",
+    "HEADER", "HR", "LI", "MAIN", "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TD", "TH", "TR", "UL"
+  ]);
+  const chunks = [];
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = child.nodeValue.replace(/\s+/g, " ").trim();
+        if (text) {
+          chunks.push(text);
+        }
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const isBlock = BLOCK_TAGS.has(child.tagName);
+        if (isBlock) {
+          chunks.push("\n");
+        }
+        walk(child);
+        if (isBlock) {
+          chunks.push("\n");
+        }
+      }
+    }
+  };
+  walk(doc.body || doc.documentElement);
+  return chunks
+    .join(" ")
+    .replace(/ *\n+ */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildResumeSchemaHint() {
+  return STRUCTURED_RESUME_SECTIONS.map((section) => ({
+    key: section.key,
+    title: section.title,
+    kind: section.kind,
+    fields: section.fields.map((field) => field.label)
+  }));
+}
+
+async function runResumeParse(resumeText) {
+  if (resumeParseInFlight) {
+    return;
+  }
+  const text = String(resumeText || "").trim();
+  if (!text) {
+    setResumeParseStatus("请先粘贴简历文本或选择简历文件。", true);
+    return;
+  }
+  if (text.length < 30) {
+    setResumeParseStatus("简历内容太短，无法解析。", true);
+    return;
+  }
+  const apiConfig = getApiConfigSnapshotFromFields();
+  if (!apiConfig.apiKey) {
+    setResumeParseStatus("简历解析需要 AI：请先在下方 API 设置填写 API Key 并保存。", true);
+    return;
+  }
+
+  resumeParseInFlight = true;
+  setResumeParseBusy(true);
+  setResumeParseStatus("正在用 AI 解析简历，通常需要几秒到几十秒…");
+  try {
+    const response = await sendRuntimeMessage({
+      type: "OJAF_PARSE_RESUME",
+      payload: {
+        resumeText: text.slice(0, 20000),
+        schema: buildResumeSchemaHint(),
+        apiConfig
+      }
+    });
+    const parsed = response?.profileV2;
+    if (!parsed) {
+      throw new Error("AI 未返回可用结果");
+    }
+
+    const current = collectProfileV2FromEditor();
+    const { merged, addedValues, addedItems } = mergeParsedProfileV2(current, parsed);
+    if (addedValues + addedItems === 0) {
+      setResumeParseStatus("解析完成，但没有新增内容（编辑器里可能已有相同资料）。");
+      return;
+    }
+
+    renderProfileSectionEditor(merged);
+    handleProfileEditorInput();
+    setResumeParseStatus(
+      `解析完成：新增 ${addedValues} 个字段值、${addedItems} 条经历，已合并到下方编辑器，请复核后点击“保存资料”。`
+    );
+    setStatus("简历解析完成，资料尚未保存，请复核后点击保存资料。");
+    showToast("简历解析完成，请复核后保存");
+  } catch (error) {
+    setResumeParseStatus(`解析失败：${error.message}`, true);
+    setStatus(`简历解析失败：${error.message}`, true);
+  } finally {
+    resumeParseInFlight = false;
+    setResumeParseBusy(false);
+  }
+}
+
+// 合并策略：已有非空值优先（解析结果只补空位）；repeat 模块按 values 完全一致去重后追加
+function mergeParsedProfileV2(current, parsed) {
+  const merged = current && typeof current === "object" ? current : createEmptyProfileV2();
+  merged.sections = merged.sections && typeof merged.sections === "object" ? merged.sections : {};
+  merged.customSections = Array.isArray(merged.customSections) ? merged.customSections : [];
+
+  let addedValues = 0;
+  let addedItems = 0;
+
+  for (const [key, parsedSection] of Object.entries(parsed?.sections || {})) {
+    const config = getStructuredSectionConfig(key);
+    if (!config || !parsedSection) {
+      continue;
+    }
+
+    if (config.kind === "repeat") {
+      const target =
+        merged.sections[key] && merged.sections[key].kind === "repeat"
+          ? merged.sections[key]
+          : { key, title: config.title, kind: "repeat", items: [] };
+      target.items = Array.isArray(target.items) ? target.items : [];
+      for (const item of Array.isArray(parsedSection.items) ? parsedSection.items : []) {
+        const values = item?.values && typeof item.values === "object" ? item.values : {};
+        if (Object.keys(values).length === 0) {
+          continue;
+        }
+        const signature = JSON.stringify(values);
+        const duplicated = target.items.some((existing) => JSON.stringify(existing?.values || {}) === signature);
+        if (duplicated) {
+          continue;
+        }
+        target.items.push({ title: String(item?.title || "").slice(0, 120), values, custom: [] });
+        addedItems += 1;
+      }
+      merged.sections[key] = target;
+      continue;
+    }
+
+    const target =
+      merged.sections[key] && merged.sections[key].kind !== "repeat"
+        ? merged.sections[key]
+        : { key, title: config.title, kind: "simple", values: {}, custom: [] };
+    target.values = target.values && typeof target.values === "object" ? target.values : {};
+    target.custom = Array.isArray(target.custom) ? target.custom : [];
+    for (const [label, value] of Object.entries(parsedSection.values || {})) {
+      const text = String(value ?? "").trim();
+      if (!label || !text) {
+        continue;
+      }
+      if (!target.values[label]) {
+        target.values[label] = text;
+        addedValues += 1;
+      }
+    }
+    merged.sections[key] = target;
+  }
+
+  for (const parsedCustom of Array.isArray(parsed?.customSections) ? parsed.customSections : []) {
+    const values = parsedCustom?.values && typeof parsedCustom.values === "object" ? parsedCustom.values : {};
+    if (Object.keys(values).length === 0) {
+      continue;
+    }
+    let target = merged.customSections.find(
+      (section) => section && (section.key === parsedCustom.key || section.title === parsedCustom.title)
+    );
+    if (!target) {
+      target = {
+        key: String(parsedCustom.key || `custom-${merged.customSections.length + 1}`),
+        title: String(parsedCustom.title || parsedCustom.key || "自定义资料"),
+        kind: "simple",
+        values: {},
+        custom: []
+      };
+      merged.customSections.push(target);
+    }
+    target.values = target.values && typeof target.values === "object" ? target.values : {};
+    for (const [label, value] of Object.entries(values)) {
+      const text = String(value ?? "").trim();
+      if (!label || !text) {
+        continue;
+      }
+      if (!target.values[label]) {
+        target.values[label] = text;
+        addedValues += 1;
+      }
+    }
+  }
+
+  return { merged, addedValues, addedItems };
+}
+
+function setResumeParseStatus(message, isError = false) {
+  if (!fields.resumeParseStatus) {
+    return;
+  }
+  fields.resumeParseStatus.textContent = message;
+  fields.resumeParseStatus.style.color = isError ? "#b23b3b" : "";
+}
+
+function setResumeParseBusy(busy) {
+  [fields.parseResumeTextButton, fields.parseResumeFileButton].forEach((button) => {
+    if (button) {
+      button.disabled = Boolean(busy);
+    }
+  });
 }
 
 function resetProfile() {

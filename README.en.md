@@ -15,6 +15,7 @@ If this project saves you time, a GitHub Star would be appreciated. Issues and f
 ## Highlights
 
 - One-click scanning for the current job application page: determined fields are filled, and the rest are marked as pending.
+- AI resume import from pasted text or .txt / .md / .html files: parsed results are merged into the profile editor for your review before saving (note: this feature sends the resume text to your configured AI endpoint once).
 - Resume data stays on your device and does not need to be uploaded to a cloud service.
 - Supports common inputs, textareas, radio buttons, checkboxes, dropdowns, and date-like fields.
 - A profile panel lets you browse, search, and manually copy saved profile data for orange pending fields.

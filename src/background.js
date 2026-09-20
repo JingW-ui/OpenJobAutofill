@@ -34,6 +34,9 @@ const MAX_PROFILE_PANEL_STATE_ITEMS = 20;
 const LEARNED_QA_SECTION_KEY = "qa-memory";
 const LEARNED_QA_SECTION_TITLE = "问答记忆";
 const MAX_LEARNED_QA = 300;
+const MAX_RESUME_TEXT_LENGTH = 20000;
+const MAX_PARSED_SECTION_ITEMS = 20;
+const MAX_PARSED_CUSTOM_SECTIONS = 20;
 const UPDATE_ALARM_NAME = "OJAF_CHECK_RELEASE_UPDATE";
 const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
 const UPDATE_REPOSITORY = "Br1an67/OpenJobAutofill";
@@ -126,6 +129,8 @@ async function handleMessage(message) {
       return deleteLearnedQA(message.payload || {});
     case "OJAF_TOUCH_LEARNED_QA":
       return touchLearnedQA(message.payload || {});
+    case "OJAF_PARSE_RESUME":
+      return parseResume(message.payload || {});
     case "OJAF_LIST_MODELS":
       return listModels(message.payload || {});
     case "OJAF_TEST_CONNECTION":
@@ -758,6 +763,178 @@ function sanitizePromptText(value, maxLength = 220) {
 
 function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+// ---- 简历解析导入：AI 把简历原文结构化为 profileV2（此功能是隐私例外，原文发往用户自配 AI） ----
+
+async function parseResume(payload) {
+  const settings = await getSettings();
+  const apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
+  if (!String(apiConfig.apiKey || "").trim()) {
+    throw new Error("简历解析需要 AI：请先在 API 设置中填写 API Key。");
+  }
+  if (!String(apiConfig.model || "").trim() && apiConfig.mode !== "custom") {
+    throw new Error("简历解析需要 AI：请先在 API 设置中填写模型名。");
+  }
+
+  const resumeText = String(payload.resumeText || "").trim().slice(0, MAX_RESUME_TEXT_LENGTH);
+  if (resumeText.length < 30) {
+    throw new Error("简历内容太短，无法解析。");
+  }
+
+  const schema = Array.isArray(payload.schema) ? payload.schema : [];
+  const messages = buildResumeParseMessages(resumeText, schema);
+  const rawContent = await callAi(apiConfig, messages, { profile: { fields: [] }, scan: { fields: [] } });
+  const parsed = parseJsonFromText(rawContent);
+  const profileV2 = normalizeParsedResume(parsed, schema);
+
+  const filledSections = Object.keys(profileV2.sections).length + profileV2.customSections.length;
+  if (filledSections === 0) {
+    throw new Error("AI 返回的结果没有可用内容，请检查简历文本或更换模型后重试。");
+  }
+
+  return {
+    profileV2,
+    stats: {
+      sections: filledSections,
+      values: countProfileV2Values(profileV2)
+    }
+  };
+}
+
+function countProfileV2Values(profileV2) {
+  let count = 0;
+  for (const section of Object.values(profileV2?.sections || {})) {
+    if (section?.kind === "repeat") {
+      for (const item of section.items || []) {
+        count += Object.keys(item?.values || {}).length;
+      }
+    } else {
+      count += Object.keys(section?.values || {}).length;
+    }
+  }
+  for (const section of profileV2?.customSections || []) {
+    count += Object.keys(section?.values || {}).length;
+  }
+  return count;
+}
+
+function buildResumeParseMessages(resumeText, schema) {
+  const systemPrompt = [
+    "You are a resume structuring engine for Chinese job application profiles.",
+    "Convert the resume text into strict JSON matching the requested profile schema.",
+    "Return strict JSON only. No prose, no markdown fences, no explanations.",
+    "Never invent information that is not present in the resume text. Omit unknown fields entirely.",
+    "Normalize dates to YYYY-MM or YYYY-MM-DD when possible; keep the original wording when ambiguous.",
+    "For yes/no declaration fields, fill 是/否 only when the resume states it explicitly; otherwise omit.",
+    "Information that fits no known section goes into customSections."
+  ].join("\n");
+
+  const userPrompt = [
+    "Known profile sections schema (key / title / kind / suggested field labels):",
+    JSON.stringify(schema, null, 2),
+    "",
+    "Return JSON with this shape:",
+    JSON.stringify(
+      {
+        sections: {
+          "<section key from schema>": {
+            values: { "<field label>": "<value>" },
+            items: [{ title: "<entry title>", values: { "<field label>": "<value>" } }]
+          }
+        },
+        customSections: [{ key: "english-key", title: "中文标题", values: { "<label>": "<value>" } }]
+      },
+      null,
+      2
+    ),
+    "",
+    "Rules:",
+    "- Use only section keys listed in the schema.",
+    "- kind=simple sections: return values only. kind=repeat sections: return items, one item per experience entry, sorted most recent first.",
+    "- Prefer the suggested field labels; you may add a new label inside a section when the resume clearly has the info but no suggested label fits.",
+    "- Omit empty or uncertain values.",
+    "",
+    "Resume text:",
+    resumeText
+  ].join("\n");
+
+  return [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt }
+  ];
+}
+
+function normalizeParsedResume(parsed, schema) {
+  const profileV2 = {
+    schemaVersion: PROFILE_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    sections: {},
+    customSections: []
+  };
+  if (!isPlainObject(parsed)) {
+    return profileV2;
+  }
+
+  const schemaByKey = new Map(
+    (Array.isArray(schema) ? schema : [])
+      .filter((section) => section && section.key)
+      .map((section) => [String(section.key), section])
+  );
+  const rawSections = isPlainObject(parsed.sections) ? parsed.sections : {};
+
+  for (const [key, raw] of Object.entries(rawSections)) {
+    const config = schemaByKey.get(key);
+    if (!config || !isPlainObject(raw)) {
+      continue;
+    }
+    const title = sanitizePromptText(config.title || key, 120);
+
+    if (config.kind === "repeat") {
+      const items = (Array.isArray(raw.items) ? raw.items : [])
+        .map((item, index) => ({
+          title: sanitizePromptText(item?.title || `${title} ${index + 1}`, 120),
+          values: normalizeProfileV2Values(item?.values),
+          custom: []
+        }))
+        .filter((item) => Object.keys(item.values).length > 0)
+        .slice(0, MAX_PARSED_SECTION_ITEMS);
+      if (items.length > 0) {
+        profileV2.sections[key] = { key, title, kind: "repeat", items };
+      }
+      continue;
+    }
+
+    const values = normalizeProfileV2Values(isPlainObject(raw.values) ? raw.values : raw);
+    if (Object.keys(values).length > 0) {
+      profileV2.sections[key] = { key, title, kind: "simple", values, custom: [] };
+    }
+  }
+
+  const rawCustomSections = Array.isArray(parsed.customSections) ? parsed.customSections : [];
+  for (const raw of rawCustomSections.slice(0, MAX_PARSED_CUSTOM_SECTIONS)) {
+    if (!isPlainObject(raw)) {
+      continue;
+    }
+    const values = normalizeProfileV2Values(raw.values);
+    if (Object.keys(values).length === 0) {
+      continue;
+    }
+    const fallbackKey = `custom-${profileV2.customSections.length + 1}`;
+    const key = sanitizeAttributeText(raw.key || fallbackKey) || fallbackKey;
+    if (key === LEARNED_QA_SECTION_KEY || profileV2.customSections.some((section) => section.key === key)) {
+      continue;
+    }
+    profileV2.customSections.push({
+      key,
+      title: sanitizePromptText(raw.title || key, 120),
+      kind: "simple",
+      values,
+      custom: []
+    });
+  }
+
+  return profileV2;
 }
 
 function normalizeProfileV2(profileV2) {

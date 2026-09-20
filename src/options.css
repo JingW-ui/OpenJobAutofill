@@ -747,3 +747,36 @@ pre.error {
   }
 
 }
+
+/* ---- 简历解析导入 ---- */
+
+.resume-import {
+  margin: 4px 0 16px;
+  border: 1px dashed rgba(38, 58, 44, 0.22);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+
+.resume-import summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.resume-import-warn {
+  color: #8a5a00;
+}
+
+.resume-import-text {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
+}
+
+.resume-import .actions {
+  align-items: center;
+}
+
+.resume-import-status {
+  color: var(--muted);
+  font-size: 13px;
+}
