@@ -1,9 +1,9 @@
 const DEFAULT_API_CONFIG = {
   mode: "openai-compatible",
-  baseUrl: "https://api.openai.com/v1",
+  baseUrl: "http://127.0.0.1:15721/v1",
   endpointPath: "/chat/completions",
-  apiKey: "",
-  model: "your-model-name",
+  apiKey: "codemaker-managed",
+  model: "glm-5.3-flash",
   useJsonResponseFormat: false,
   extraHeadersJson: "{}",
   customUrl: "",

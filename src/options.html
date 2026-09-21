@@ -37,7 +37,7 @@
             </li>
           </ol>
           <p class="optional-api-note">
-            AI 页面分析是可选增强：如果希望模型辅助理解表单字段，再到下方 API 设置填写 API Key、Base URL 和模型名。测试 API 连接只验证当前表单值，点击“保存 API 设置”后才会用于填写。不配置 API 时仍可使用本地规则填写。
+            AI 页面分析默认走内置的内网本地代理（开箱即用，只发送字段名、不发送资料值）；如需更换，到下方 API 设置修改后点“保存 API 设置”。完全不配置 API 时也可使用本地规则填写。
           </p>
         </div>
       </section>
@@ -103,7 +103,8 @@
         </section>
 
         <form id="settingsForm" class="card">
-          <h2>API 设置（可选，用于 AI 页面分析）</h2>
+          <h2>API 设置（用于 AI 页面分析与简历解析）</h2>
+          <p class="hint">默认已配置内网本地代理（127.0.0.1:15721，模型 glm-5.3-flash），开箱即用；也可以改成任意 OpenAI 兼容接口或自定义请求模板。</p>
 
           <label>
             API 模式

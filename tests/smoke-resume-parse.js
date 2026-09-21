@@ -93,7 +93,8 @@ const MINI_SCHEMA = [
 const RESUME_TEXT = "张三，电话13800001111，2021年9月入学某某大学计算机科学专业……（此处为超过30字的简历文本）";
 
 (async () => {
-  // 1. 未配置 API Key 时应报错
+  // 1. 显式清空 API Key 时应报错（默认值会被存储值覆盖）
+  store.apiConfig = { apiKey: "", model: "" };
   await assert.rejects(
     () => send({ type: "OJAF_PARSE_RESUME", payload: { resumeText: RESUME_TEXT, schema: MINI_SCHEMA } }),
     /API Key/
