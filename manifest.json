@@ -3,7 +3,7 @@
   "name": "OpenJobAutofill",
   "version": "1.0.2",
   "description": "Local resume profile helper with privacy-first AI page analysis and one-click form filling.",
-  "homepage_url": "https://github.com/Br1an67/OpenJobAutofill",
+  "homepage_url": "https://github.com/JingW-ui/OpenJobAutofill",
   "permissions": [
     "activeTab",
     "alarms",

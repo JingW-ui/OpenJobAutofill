@@ -39,7 +39,7 @@ const MAX_PARSED_SECTION_ITEMS = 20;
 const MAX_PARSED_CUSTOM_SECTIONS = 20;
 const UPDATE_ALARM_NAME = "OJAF_CHECK_RELEASE_UPDATE";
 const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
-const UPDATE_REPOSITORY = "Br1an67/OpenJobAutofill";
+const UPDATE_REPOSITORY = "JingW-ui/OpenJobAutofill";
 const UPDATE_LATEST_RELEASE_API = `https://api.github.com/repos/${UPDATE_REPOSITORY}/releases/latest`;
 const UPDATE_RELEASES_URL = `https://github.com/${UPDATE_REPOSITORY}/releases`;
 
