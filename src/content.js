@@ -38,6 +38,7 @@
   let autofillAiState = createAutofillAiState();
   let currentLearnedQA = [];
   let currentVersionName = "";
+  let onlyFillBlank = true;
   let lastAutofillPlan = null;
   let lastPendingFields = [];
 
@@ -3151,6 +3152,7 @@
       const versionsMeta = settings.versions;
       currentVersionName =
         versionsMeta?.list?.find((version) => version.id === versionsMeta.activeId)?.name || "";
+      onlyFillBlank = settings.fillConfig?.onlyBlank !== false;
       return currentProfileV2;
     })();
 
@@ -5437,8 +5439,14 @@
       };
     });
     const candidates = [];
+    let skippedExistingCount = 0;
 
     for (const field of enrichedFields) {
+      // 「只填空白项」开启时：页面已有内容的字段直接跳过（不写、不标记），占位符伪值不算已有内容
+      if (onlyFillBlank && field.hasCurrentValue) {
+        skippedExistingCount += 1;
+        continue;
+      }
       const fieldLabel = field.inferredLabel || inferFieldLabel(field);
       const fieldCategory = field.inferredCategory || inferMatchSection(field);
       const nextOccurrenceIndex = (fieldCounters.get(field.occurrenceKey) || 0) + 1;
@@ -5488,6 +5496,7 @@
       scan,
       entries,
       candidates,
+      skippedExistingCount,
       autoFillIds: new Set(candidates.filter((candidate) => candidate.shouldAutoFill).map((candidate) => candidate.id))
     };
   }
@@ -5599,7 +5608,8 @@
     const mappings = Array.isArray(response?.mappings) ? response.mappings : [];
     const aiCandidates = mappings
       .map((mapping) => createAiAutofillCandidate(mapping, scan, entries))
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((candidate) => !(onlyFillBlank && candidate.field?.hasCurrentValue));
     if (aiCandidates.length === 0) {
       setAutofillAiNoResult("字段理解", "AI 未返回可用字段匹配");
       setAutofillProgress("本地兜底匹配", 82, "AI 未返回可用匹配，正在切换本地规则兜底");
@@ -5786,7 +5796,7 @@
           failed: 0,
           skipped: skippedCount || plan?.candidates?.length || 0,
           total: plan?.candidates?.length || 0,
-          message: "没有找到可自动填写的字段，橙色标记需要手动处理。",
+          message: `没有找到可自动填写的字段，橙色标记需要手动处理。${plan?.skippedExistingCount > 0 ? `已跳过 ${plan.skippedExistingCount} 个已有内容字段。` : ""}`,
           aiUsage
         };
         rememberPendingContext(plan, []);
@@ -5904,7 +5914,7 @@
       skipped: skippedCount,
       pending: failedCount + skippedCount,
       total: plan?.candidates?.length || results.length,
-      message: `页面已标记：绿色为已填写，橙色为待处理。`,
+      message: `页面已标记：绿色为已填写，橙色为待处理。${plan?.skippedExistingCount > 0 ? `已跳过 ${plan.skippedExistingCount} 个已有内容字段。` : ""}`,
       aiUsage: getAutofillAiSnapshot()
     };
     setProfilePanelStatus(`已自动填写 ${filledCount} 项，待处理 ${summary.pending} 项。`);

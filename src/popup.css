@@ -167,6 +167,27 @@ button.ghost.full {
   color: var(--danger);
 }
 
+/* ---- 填写模式开关 ---- */
+
+.fill-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.fill-mode-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 /* ---- 解析当前页 ---- */
 
 .parse-page-hint {

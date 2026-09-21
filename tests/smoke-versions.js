@@ -166,6 +166,15 @@ const LEGACY_PROFILE = {
   );
   console.log("PASS 12 空草稿拒绝");
 
+  // 13. fillConfig 只填空白项：默认 true + 可关闭 + 读取回环
+  const s7 = await send({ type: "OJAF_GET_SETTINGS" });
+  assert.strictEqual(s7.fillConfig.onlyBlank, true, "onlyBlank 默认应为 true");
+  await send({ type: "OJAF_SAVE_SETTINGS", payload: { fillConfig: { onlyBlank: false } } });
+  const s8 = await send({ type: "OJAF_GET_SETTINGS" });
+  assert.strictEqual(s8.fillConfig.onlyBlank, false, "关闭后应读回 false");
+  await send({ type: "OJAF_SAVE_SETTINGS", payload: { fillConfig: { onlyBlank: true } } });
+  console.log("PASS 13 fillConfig 默认值与读写回环");
+
   console.log("ALL PASS: 版本管理断言全部通过");
   process.exit(0);
 })().catch((error) => {

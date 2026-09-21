@@ -27,7 +27,12 @@ const STORAGE_KEYS = {
   profileV2: "profileV2",
   apiConfig: "apiConfig",
   updateState: "updateState",
-  learnedQA: "learnedQA"
+  learnedQA: "learnedQA",
+  fillConfig: "fillConfig"
+};
+
+const DEFAULT_FILL_CONFIG = {
+  onlyBlank: true
 };
 
 const PROFILE_PANEL_STATE_KEY = "OJAF_PROFILE_PANEL_STATE";
@@ -224,13 +229,14 @@ async function handleMessage(message) {
 
 async function getSettings() {
   const [values, versionStore] = await Promise.all([
-    chrome.storage.local.get([STORAGE_KEYS.apiConfig, STORAGE_KEYS.learnedQA]),
+    chrome.storage.local.get([STORAGE_KEYS.apiConfig, STORAGE_KEYS.learnedQA, STORAGE_KEYS.fillConfig]),
     getProfileVersions()
   ]);
   return {
     profileV2: resolveEffectiveProfileV2(versionStore),
     apiConfig: { ...DEFAULT_API_CONFIG, ...(values[STORAGE_KEYS.apiConfig] || {}) },
     learnedQA: Array.isArray(values[STORAGE_KEYS.learnedQA]) ? values[STORAGE_KEYS.learnedQA] : [],
+    fillConfig: { ...DEFAULT_FILL_CONFIG, ...(values[STORAGE_KEYS.fillConfig] || {}) },
     versions: summarizeVersions(versionStore)
   };
 }
@@ -269,6 +275,13 @@ async function saveSettings(payload) {
       [STORAGE_KEYS.apiConfig]: { ...DEFAULT_API_CONFIG, ...payload.apiConfig }
     });
     savedKeys.push(STORAGE_KEYS.apiConfig);
+  }
+
+  if (payload.fillConfig) {
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.fillConfig]: { ...DEFAULT_FILL_CONFIG, ...payload.fillConfig }
+    });
+    savedKeys.push(STORAGE_KEYS.fillConfig);
   }
 
   return { saved: savedKeys };

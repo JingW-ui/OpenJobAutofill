@@ -8,7 +8,8 @@ const els = {
   checkUpdateBtn: document.getElementById("checkUpdateBtn"),
   openUpdateBtn: document.getElementById("openUpdateBtn"),
   versionSelect: document.getElementById("versionSelect"),
-  parsePageResumeBtn: document.getElementById("parsePageResumeBtn")
+  parsePageResumeBtn: document.getElementById("parsePageResumeBtn"),
+  onlyBlankToggle: document.getElementById("onlyBlankToggle")
 };
 
 const DEFAULT_START_LABEL = els.startAutofillBtn.textContent;
@@ -36,6 +37,9 @@ els.versionSelect?.addEventListener("change", () => {
 els.parsePageResumeBtn?.addEventListener("click", () => {
   void parseCurrentPageAsResume();
 });
+els.onlyBlankToggle?.addEventListener("change", () => {
+  void saveOnlyBlank(els.onlyBlankToggle.checked);
+});
 
 initialize();
 
@@ -53,11 +57,14 @@ async function initialize() {
 }
 
 async function syncVersions() {
-  if (!els.versionSelect) {
-    return;
-  }
   try {
     const settings = await sendRuntimeMessage({ type: "OJAF_GET_SETTINGS" });
+    if (els.onlyBlankToggle) {
+      els.onlyBlankToggle.checked = settings?.fillConfig?.onlyBlank !== false;
+    }
+    if (!els.versionSelect) {
+      return;
+    }
     const versions = settings?.versions;
     if (!versions || !Array.isArray(versions.list) || versions.list.length === 0) {
       return;
@@ -72,6 +79,21 @@ async function syncVersions() {
     els.versionSelect.value = versions.activeId;
   } catch {
     // 版本列表读取失败不阻塞主流程
+  }
+}
+
+async function saveOnlyBlank(checked) {
+  try {
+    await sendRuntimeMessage({
+      type: "OJAF_SAVE_SETTINGS",
+      payload: { fillConfig: { onlyBlank: Boolean(checked) } }
+    });
+    setStatus(checked ? "已开启：只填空白项，页面已有内容不会被覆盖。" : "已关闭：高置信度匹配会覆盖页面已有内容（慎用）。");
+  } catch (error) {
+    setStatus(`保存填写模式失败：${error.message}`, true);
+    if (els.onlyBlankToggle) {
+      els.onlyBlankToggle.checked = !checked;
+    }
   }
 }
 
