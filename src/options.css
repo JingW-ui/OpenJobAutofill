@@ -777,6 +777,45 @@ html {
   background-clip: padding-box;
 }
 
+/* ---- 版本管理栏 ---- */
+
+.version-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 4px 0 6px;
+}
+
+.version-bar-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.version-bar-select select {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.version-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.version-bar-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.version-hint {
+  margin-top: 0;
+}
+
 /* ---- 简历解析导入 ---- */
 
 .resume-import {

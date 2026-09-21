@@ -19,6 +19,12 @@ const fields = {
   profileNav: document.getElementById("profileNav"),
   profileTips: document.getElementById("profileTips"),
   profileFileInput: document.getElementById("profileFileInput"),
+  versionSelect: document.getElementById("versionSelect"),
+  versionCreate: document.getElementById("versionCreate"),
+  versionDuplicate: document.getElementById("versionDuplicate"),
+  versionRename: document.getElementById("versionRename"),
+  versionDelete: document.getElementById("versionDelete"),
+  versionHint: document.getElementById("versionHint"),
   resumeTextInput: document.getElementById("resumeTextInput"),
   parseResumeTextButton: document.getElementById("parseResumeText"),
   parseResumeFileButton: document.getElementById("parseResumeFile"),
@@ -462,6 +468,8 @@ const STRUCTURED_RESUME_SECTIONS = [
 ];
 
 let activeProfileSectionKey = "";
+let editingVersionId = "";
+let versionsMeta = null;
 let profileSectionSyncFrame = 0;
 let apiHasUnsavedChanges = false;
 let apiSettingsLoaded = false;
@@ -477,6 +485,11 @@ document.getElementById("settingsForm").addEventListener("submit", async (event)
 document.getElementById("refreshModels").addEventListener("click", refreshModelList);
 document.getElementById("testConnection").addEventListener("click", testConnection);
 fields.restoreDefaultApiButton?.addEventListener("click", restoreDefaultApi);
+fields.versionSelect?.addEventListener("change", handleVersionSwitch);
+fields.versionCreate?.addEventListener("click", createVersionBlank);
+fields.versionDuplicate?.addEventListener("click", duplicateCurrentVersion);
+fields.versionRename?.addEventListener("click", renameCurrentVersion);
+fields.versionDelete?.addEventListener("click", deleteCurrentVersion);
 fields.saveProfileButton.addEventListener("click", saveProfile);
 document.getElementById("exportProfile").addEventListener("click", exportProfile);
 document.getElementById("importProfile").addEventListener("click", () => fields.profileFileInput.click());
@@ -530,16 +543,183 @@ async function loadSettings() {
     const settings = await sendRuntimeMessage({ type: "OJAF_GET_SETTINGS" });
     applyApiConfig(settings.apiConfig);
     setApiSaved("API 设置已加载，当前没有未保存修改。");
+    versionsMeta = settings.versions || null;
+    renderVersionBar();
     renderProfileNav();
     renderProfileTips(RESUME_SECTION_GUIDE[0]?.key);
-    renderProfileSectionEditor(getProfileV2FromSettings(settings));
-    setProfileSaved("资料已加载，当前没有未保存修改。");
+    await loadVersionIntoEditor(versionsMeta?.activeId || "");
     scheduleProfileSectionSync();
     updateModeBlocks();
     setStatus("设置已加载。");
     await maybeAutoRefreshModelList({ silent: true });
   } catch (error) {
     setStatus(`加载失败：${error.message}`, true);
+  }
+}
+
+// ---- 简历版本管理 ----
+
+function renderVersionBar() {
+  if (!fields.versionSelect) {
+    return;
+  }
+  const list = versionsMeta?.list || [];
+  fields.versionSelect.textContent = "";
+  for (const version of list) {
+    const option = document.createElement("option");
+    option.value = version.id;
+    option.textContent = version.isMain ? `${version.name}（主简历）` : version.name;
+    fields.versionSelect.appendChild(option);
+  }
+  if (editingVersionId) {
+    fields.versionSelect.value = editingVersionId;
+  }
+  const editingIsMain = Boolean(list.find((version) => version.id === editingVersionId)?.isMain);
+  if (fields.versionDelete) {
+    fields.versionDelete.disabled = editingIsMain || list.length <= 1;
+  }
+  if (fields.versionHint) {
+    fields.versionHint.hidden = editingIsMain;
+  }
+}
+
+async function loadVersionIntoEditor(versionId) {
+  const response = await sendRuntimeMessage({
+    type: "OJAF_GET_VERSION",
+    payload: versionId ? { id: versionId } : {}
+  });
+  const version = response?.version;
+  if (response?.versions) {
+    versionsMeta = response.versions;
+  }
+  if (!version) {
+    throw new Error("版本读取失败");
+  }
+  editingVersionId = version.id;
+  renderVersionBar();
+  renderProfileSectionEditor(version.profileV2 || createEmptyProfileV2());
+  setProfileSaved(`正在编辑版本「${version.name}」，内容已加载。`);
+}
+
+async function handleVersionSwitch() {
+  const nextId = fields.versionSelect?.value;
+  if (!nextId || nextId === editingVersionId) {
+    return;
+  }
+  if (profileHasUnsavedChanges) {
+    const confirmed = window.confirm("当前版本有未保存修改，切换后将丢失。是否继续？");
+    if (!confirmed) {
+      fields.versionSelect.value = editingVersionId;
+      return;
+    }
+  }
+  try {
+    await loadVersionIntoEditor(nextId);
+    setStatus("已切换编辑版本。");
+  } catch (error) {
+    setStatus(`切换版本失败：${error.message}`, true);
+  }
+}
+
+async function createVersionWithName(name, fromId) {
+  const response = await sendRuntimeMessage({
+    type: "OJAF_CREATE_VERSION",
+    payload: fromId ? { name, fromId } : { name }
+  });
+  if (response?.versions) {
+    versionsMeta = response.versions;
+  }
+  await loadVersionIntoEditor(response?.version?.id || "");
+  setStatus(`已创建并切换到新版本「${name}」。`);
+  showToast(`已创建版本「${name}」`);
+}
+
+async function createVersionBlank() {
+  const name = window.prompt("新建空白版本，名称（例如：后端开发-杭州）：", "");
+  if (name === null) {
+    return;
+  }
+  const trimmed = name.trim();
+  if (!trimmed) {
+    setStatus("版本名称不能为空。", true);
+    return;
+  }
+  try {
+    await createVersionWithName(trimmed);
+  } catch (error) {
+    setStatus(`新建失败：${error.message}`, true);
+  }
+}
+
+async function duplicateCurrentVersion() {
+  const current = versionsMeta?.list?.find((version) => version.id === editingVersionId);
+  const base = current?.name || "简历";
+  try {
+    await createVersionWithName(`${base}-副本`, editingVersionId);
+  } catch (error) {
+    if (/同名/.test(error.message)) {
+      try {
+        await createVersionWithName(`${base}-副本${new Date().toISOString().slice(5, 10)}`, editingVersionId);
+      } catch (retryError) {
+        setStatus(`复制失败：${retryError.message}`, true);
+      }
+    } else {
+      setStatus(`复制失败：${error.message}`, true);
+    }
+  }
+}
+
+async function renameCurrentVersion() {
+  const current = versionsMeta?.list?.find((version) => version.id === editingVersionId);
+  const name = window.prompt("版本重命名：", current?.name || "");
+  if (name === null) {
+    return;
+  }
+  const trimmed = name.trim();
+  if (!trimmed) {
+    setStatus("版本名称不能为空。", true);
+    return;
+  }
+  try {
+    const response = await sendRuntimeMessage({
+      type: "OJAF_RENAME_VERSION",
+      payload: { id: editingVersionId, name: trimmed }
+    });
+    if (response?.versions) {
+      versionsMeta = response.versions;
+    }
+    renderVersionBar();
+    setStatus(`已重命名为「${trimmed}」。`);
+  } catch (error) {
+    setStatus(`重命名失败：${error.message}`, true);
+  }
+}
+
+async function deleteCurrentVersion() {
+  const current = versionsMeta?.list?.find((version) => version.id === editingVersionId);
+  if (!current) {
+    return;
+  }
+  if (current.isMain) {
+    setStatus("主简历不能删除。", true);
+    return;
+  }
+  const confirmed = window.confirm(`确定删除版本「${current.name}」？此操作不可恢复。`);
+  if (!confirmed) {
+    return;
+  }
+  try {
+    const response = await sendRuntimeMessage({
+      type: "OJAF_DELETE_VERSION",
+      payload: { id: editingVersionId }
+    });
+    if (response?.versions) {
+      versionsMeta = response.versions;
+    }
+    await loadVersionIntoEditor(versionsMeta?.activeId || versionsMeta?.mainId || "");
+    setStatus("版本已删除。");
+  } catch (error) {
+    setStatus(`删除失败：${error.message}`, true);
   }
 }
 
@@ -707,7 +887,7 @@ async function saveProfile() {
     const profileV2 = collectProfileV2FromEditor();
     await sendRuntimeMessage({
       type: "OJAF_SAVE_SETTINGS",
-      payload: { profileV2 }
+      payload: { profileV2, versionId: editingVersionId || undefined }
     });
     setStatus("简历资料保存成功，已保存到本机浏览器。");
     setProfileSaved("资料已保存到本机。");
@@ -755,7 +935,7 @@ async function importProfileFromFile() {
     renderProfileSectionEditor(profileV2);
     await sendRuntimeMessage({
       type: "OJAF_SAVE_SETTINGS",
-      payload: { profileV2 }
+      payload: { profileV2, versionId: editingVersionId || undefined }
     });
     setStatus("已导入并保存到本机。资料面板会立即读取这份简历资料。");
     setProfileSaved("资料已导入并保存到本机。");

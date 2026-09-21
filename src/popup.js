@@ -6,7 +6,8 @@ const els = {
   clearMarksBtn: document.getElementById("clearMarksBtn"),
   updateStatus: document.getElementById("updateStatus"),
   checkUpdateBtn: document.getElementById("checkUpdateBtn"),
-  openUpdateBtn: document.getElementById("openUpdateBtn")
+  openUpdateBtn: document.getElementById("openUpdateBtn"),
+  versionSelect: document.getElementById("versionSelect")
 };
 
 const DEFAULT_START_LABEL = els.startAutofillBtn.textContent;
@@ -28,16 +29,57 @@ els.checkUpdateBtn.addEventListener("click", () => {
 els.openUpdateBtn.addEventListener("click", () => {
   void openUpdatePage();
 });
+els.versionSelect?.addEventListener("change", () => {
+  void switchVersion(els.versionSelect.value);
+});
 
 initialize();
 
 async function initialize() {
   try {
     setStatus("点击开始填写后，右下角会实时显示当前是本地规则还是 AI；AI 不可用也能继续用本地规则填写。");
+    await syncVersions();
     await syncUpdateStatus();
     await syncRuntimeState();
   } catch (error) {
     setStatus(`读取页面失败：${error.message}`, true);
+  }
+}
+
+async function syncVersions() {
+  if (!els.versionSelect) {
+    return;
+  }
+  try {
+    const settings = await sendRuntimeMessage({ type: "OJAF_GET_SETTINGS" });
+    const versions = settings?.versions;
+    if (!versions || !Array.isArray(versions.list) || versions.list.length === 0) {
+      return;
+    }
+    els.versionSelect.textContent = "";
+    for (const version of versions.list) {
+      const option = document.createElement("option");
+      option.value = version.id;
+      option.textContent = version.isMain ? `${version.name}（主）` : version.name;
+      els.versionSelect.appendChild(option);
+    }
+    els.versionSelect.value = versions.activeId;
+  } catch {
+    // 版本列表读取失败不阻塞主流程
+  }
+}
+
+async function switchVersion(versionId) {
+  if (!versionId) {
+    return;
+  }
+  try {
+    await sendRuntimeMessage({ type: "OJAF_SET_ACTIVE_VERSION", payload: { id: versionId } });
+    const name = els.versionSelect?.selectedOptions?.[0]?.textContent || "";
+    setStatus(`已切换简历版本：${name}。开始填写将使用该版本。`);
+  } catch (error) {
+    setStatus(`切换版本失败：${error.message}`, true);
+    await syncVersions();
   }
 }
 

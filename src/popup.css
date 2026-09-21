@@ -167,6 +167,30 @@ button.ghost.full {
   color: var(--danger);
 }
 
+/* ---- 版本选择 ---- */
+
+.version-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.version-picker-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.version-select {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+}
+
 /* ---- 细滚动条 ---- */
 
 html {

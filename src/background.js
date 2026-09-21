@@ -37,6 +37,9 @@ const MAX_LEARNED_QA = 300;
 const MAX_RESUME_TEXT_LENGTH = 20000;
 const MAX_PARSED_SECTION_ITEMS = 20;
 const MAX_PARSED_CUSTOM_SECTIONS = 20;
+const PROFILE_VERSIONS_KEY = "profileVersions";
+const MAIN_VERSION_NAME = "主简历";
+const MAX_PROFILE_VERSIONS = 20;
 const UPDATE_ALARM_NAME = "OJAF_CHECK_RELEASE_UPDATE";
 const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
 const UPDATE_REPOSITORY = "JingW-ui/OpenJobAutofill";
@@ -158,6 +161,18 @@ async function handleMessage(message) {
       return parseResume(message.payload || {});
     case "OJAF_GET_DEFAULT_API_CONFIG":
       return { apiConfig: { ...DEFAULT_API_CONFIG } };
+    case "OJAF_LIST_VERSIONS":
+      return getProfileVersions().then((store) => ({ versions: summarizeVersions(store) }));
+    case "OJAF_GET_VERSION":
+      return getVersionDetail(message.payload || {});
+    case "OJAF_CREATE_VERSION":
+      return createVersion(message.payload || {});
+    case "OJAF_RENAME_VERSION":
+      return renameVersion(message.payload || {});
+    case "OJAF_DELETE_VERSION":
+      return deleteVersion(message.payload || {});
+    case "OJAF_SET_ACTIVE_VERSION":
+      return setActiveVersion(message.payload || {});
     case "OJAF_LIST_MODELS":
       return listModels(message.payload || {});
     case "OJAF_TEST_CONNECTION":
@@ -174,45 +189,55 @@ async function handleMessage(message) {
 }
 
 async function getSettings() {
-  const values = await chrome.storage.local.get([
-    STORAGE_KEYS.profileV2,
-    STORAGE_KEYS.apiConfig,
-    STORAGE_KEYS.learnedQA
+  const [values, versionStore] = await Promise.all([
+    chrome.storage.local.get([STORAGE_KEYS.apiConfig, STORAGE_KEYS.learnedQA]),
+    getProfileVersions()
   ]);
   return {
-    profileV2: normalizeProfileV2(values[STORAGE_KEYS.profileV2] || DEFAULT_PROFILE_V2),
+    profileV2: resolveEffectiveProfileV2(versionStore),
     apiConfig: { ...DEFAULT_API_CONFIG, ...(values[STORAGE_KEYS.apiConfig] || {}) },
-    learnedQA: Array.isArray(values[STORAGE_KEYS.learnedQA]) ? values[STORAGE_KEYS.learnedQA] : []
+    learnedQA: Array.isArray(values[STORAGE_KEYS.learnedQA]) ? values[STORAGE_KEYS.learnedQA] : [],
+    versions: summarizeVersions(versionStore)
   };
 }
 
 async function saveSettings(payload) {
-  const next = {};
+  const savedKeys = [];
 
   if (payload.profileV2) {
-    next[STORAGE_KEYS.profileV2] = normalizeProfileV2(payload.profileV2);
+    const store = await getProfileVersions();
+    const target = findVersion(store, String(payload.versionId || "")) || getActiveVersion(store);
+    target.profileV2 = normalizeProfileV2(payload.profileV2);
+    target.updatedAt = new Date().toISOString();
+    await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
+    savedKeys.push(`${PROFILE_VERSIONS_KEY}:${target.id}`);
 
-    // 问答记忆一致性：在设置页删除/改名后，同步清理 learnedQA 元数据，防止快车道继续命中已删除的答案
-    const items = await listLearnedQA();
-    if (items.length > 0) {
-      const section = next[STORAGE_KEYS.profileV2].customSections.find(
-        (entry) => entry && entry.key === LEARNED_QA_SECTION_KEY
-      );
-      const kept = items.filter(
-        (qa) => section && section.values && Object.prototype.hasOwnProperty.call(section.values, qa?.question)
-      );
-      if (kept.length !== items.length) {
-        next[STORAGE_KEYS.learnedQA] = kept;
+    // 问答记忆一致性：仅保存主简历时校验——设置页删除/改名后，同步清理 learnedQA 元数据
+    if (target.id === store.mainId) {
+      const items = await listLearnedQA();
+      if (items.length > 0) {
+        const section = target.profileV2.customSections.find(
+          (entry) => entry && entry.key === LEARNED_QA_SECTION_KEY
+        );
+        const kept = items.filter(
+          (qa) => section && section.values && Object.prototype.hasOwnProperty.call(section.values, qa?.question)
+        );
+        if (kept.length !== items.length) {
+          await chrome.storage.local.set({ [STORAGE_KEYS.learnedQA]: kept });
+          savedKeys.push(STORAGE_KEYS.learnedQA);
+        }
       }
     }
   }
 
   if (payload.apiConfig) {
-    next[STORAGE_KEYS.apiConfig] = { ...DEFAULT_API_CONFIG, ...payload.apiConfig };
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.apiConfig]: { ...DEFAULT_API_CONFIG, ...payload.apiConfig }
+    });
+    savedKeys.push(STORAGE_KEYS.apiConfig);
   }
 
-  await chrome.storage.local.set(next);
-  return { saved: Object.keys(next) };
+  return { saved: savedKeys };
 }
 
 async function clearSettings() {
@@ -271,10 +296,12 @@ async function saveLearnedQA(payload) {
   items.sort((a, b) => Number(b?.updatedAt || 0) - Number(a?.updatedAt || 0));
   const trimmed = items.slice(0, MAX_LEARNED_QA);
 
-  // 提升到 profileV2.customSections["qa-memory"]：该模块会自动进入资料目录，AI/本地匹配链路零改动复用
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.profileV2]);
-  const profileV2 = normalizeProfileV2(stored[STORAGE_KEYS.profileV2] || DEFAULT_PROFILE_V2);
-  let section = profileV2.customSections.find((entry) => entry && entry.key === LEARNED_QA_SECTION_KEY);
+  // 提升到主简历的 customSections["qa-memory"]：问答记忆全局共属于主简历，
+  // 子简历生效时会自动并入该模块（见 resolveEffectiveProfileV2），AI/本地匹配链路零改动复用
+  const store = await getProfileVersions();
+  const main = getMainVersion(store);
+  const mainProfile = normalizeProfileV2(main.profileV2 || DEFAULT_PROFILE_V2);
+  let section = mainProfile.customSections.find((entry) => entry && entry.key === LEARNED_QA_SECTION_KEY);
   if (!section) {
     section = {
       key: LEARNED_QA_SECTION_KEY,
@@ -283,14 +310,16 @@ async function saveLearnedQA(payload) {
       values: {},
       custom: []
     };
-    profileV2.customSections.push(section);
+    mainProfile.customSections.push(section);
   }
   section.values[question] = answer;
-  profileV2.updatedAt = new Date(now).toISOString();
+  mainProfile.updatedAt = new Date(now).toISOString();
+  main.profileV2 = mainProfile;
+  main.updatedAt = new Date(now).toISOString();
 
   await chrome.storage.local.set({
     [STORAGE_KEYS.learnedQA]: trimmed,
-    [STORAGE_KEYS.profileV2]: normalizeProfileV2(profileV2)
+    [PROFILE_VERSIONS_KEY]: store
   });
 
   return { saved: true, qa, learnedCount: trimmed.length };
@@ -306,16 +335,19 @@ async function deleteLearnedQA(payload) {
   const next = items.filter((item) => item && item.id !== id);
 
   if (target) {
-    const stored = await chrome.storage.local.get([STORAGE_KEYS.profileV2]);
-    const profileV2 = normalizeProfileV2(stored[STORAGE_KEYS.profileV2] || DEFAULT_PROFILE_V2);
-    const section = profileV2.customSections.find((entry) => entry && entry.key === LEARNED_QA_SECTION_KEY);
+    const store = await getProfileVersions();
+    const main = getMainVersion(store);
+    const mainProfile = normalizeProfileV2(main.profileV2 || DEFAULT_PROFILE_V2);
+    const section = mainProfile.customSections.find((entry) => entry && entry.key === LEARNED_QA_SECTION_KEY);
     if (section && section.values && Object.prototype.hasOwnProperty.call(section.values, target.question)) {
       delete section.values[target.question];
     }
-    profileV2.updatedAt = new Date().toISOString();
+    mainProfile.updatedAt = new Date().toISOString();
+    main.profileV2 = mainProfile;
+    main.updatedAt = new Date().toISOString();
     await chrome.storage.local.set({
       [STORAGE_KEYS.learnedQA]: next,
-      [STORAGE_KEYS.profileV2]: normalizeProfileV2(profileV2)
+      [PROFILE_VERSIONS_KEY]: store
     });
   } else {
     await chrome.storage.local.set({ [STORAGE_KEYS.learnedQA]: next });
@@ -338,6 +370,196 @@ async function touchLearnedQA(payload) {
   target.lastUsedAt = Date.now();
   await chrome.storage.local.set({ [STORAGE_KEYS.learnedQA]: items });
   return { touched: true };
+}
+
+// ---- 简历版本管理：主简历（全量 + 问答记忆）+ 子简历（岗位变体），填写时生效 = active 版本 + 主简历问答记忆 ----
+
+function createVersionId() {
+  return `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function isValidVersionStore(store) {
+  return Boolean(
+    store &&
+      typeof store === "object" &&
+      Array.isArray(store.versions) &&
+      store.versions.length > 0 &&
+      store.versions.every((version) => version && version.id && version.profileV2)
+  );
+}
+
+function migrateToVersionStore(legacyProfileV2) {
+  const now = new Date().toISOString();
+  const id = createVersionId();
+  return {
+    mainId: id,
+    activeId: id,
+    versions: [
+      {
+        id,
+        name: MAIN_VERSION_NAME,
+        isMain: true,
+        createdAt: now,
+        updatedAt: now,
+        profileV2: normalizeProfileV2(legacyProfileV2 || DEFAULT_PROFILE_V2)
+      }
+    ]
+  };
+}
+
+async function getProfileVersions() {
+  const values = await chrome.storage.local.get([PROFILE_VERSIONS_KEY, STORAGE_KEYS.profileV2]);
+  const store = values[PROFILE_VERSIONS_KEY];
+  if (isValidVersionStore(store)) {
+    return store;
+  }
+  // 旧单份资料自动迁移为"主简历"版本
+  const migrated = migrateToVersionStore(values[STORAGE_KEYS.profileV2]);
+  await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: migrated });
+  return migrated;
+}
+
+function findVersion(store, id) {
+  return store.versions.find((version) => version.id === id) || null;
+}
+
+function getMainVersion(store) {
+  return findVersion(store, store.mainId) || store.versions[0];
+}
+
+function getActiveVersion(store) {
+  return findVersion(store, store.activeId) || getMainVersion(store);
+}
+
+function summarizeVersions(store) {
+  return {
+    mainId: store.mainId,
+    activeId: store.activeId,
+    list: store.versions.map((version) => ({
+      id: version.id,
+      name: version.name,
+      isMain: version.id === store.mainId || Boolean(version.isMain),
+      updatedAt: version.updatedAt || ""
+    }))
+  };
+}
+
+// 生效资料 = active 版本内容；若 active 是子简历，则把主简历的"问答记忆"并入（子简历自身不持有 qa-memory）
+function resolveEffectiveProfileV2(store) {
+  const active = getActiveVersion(store);
+  const main = getMainVersion(store);
+  const profile = JSON.parse(JSON.stringify(active.profileV2 || DEFAULT_PROFILE_V2));
+
+  if (active.id !== main.id) {
+    const mainQa = (Array.isArray(main.profileV2?.customSections) ? main.profileV2.customSections : []).find(
+      (section) => section && section.key === LEARNED_QA_SECTION_KEY
+    );
+    if (mainQa && Object.keys(mainQa.values || {}).length > 0) {
+      profile.customSections = (Array.isArray(profile.customSections) ? profile.customSections : []).filter(
+        (section) => section && section.key !== LEARNED_QA_SECTION_KEY
+      );
+      profile.customSections.push({
+        key: LEARNED_QA_SECTION_KEY,
+        title: LEARNED_QA_SECTION_TITLE,
+        kind: "simple",
+        values: { ...mainQa.values },
+        custom: []
+      });
+    }
+  }
+
+  return normalizeProfileV2(profile);
+}
+
+async function getVersionDetail(payload) {
+  const store = await getProfileVersions();
+  const version = findVersion(store, String(payload?.id || "")) || getActiveVersion(store);
+  return {
+    version: {
+      id: version.id,
+      name: version.name,
+      isMain: version.id === store.mainId,
+      profileV2: version.profileV2
+    },
+    versions: summarizeVersions(store)
+  };
+}
+
+async function createVersion(payload) {
+  const store = await getProfileVersions();
+  if (store.versions.length >= MAX_PROFILE_VERSIONS) {
+    throw new Error(`版本数量已达上限（${MAX_PROFILE_VERSIONS} 个）`);
+  }
+  const name = String(payload?.name || "").trim().slice(0, 40);
+  if (!name) {
+    throw new Error("版本名称不能为空");
+  }
+  if (store.versions.some((version) => version.name === name)) {
+    throw new Error("已存在同名版本，请换个名称");
+  }
+
+  const source = payload?.fromId
+    ? findVersion(store, String(payload.fromId))
+    : null;
+  const now = new Date().toISOString();
+  const version = {
+    id: createVersionId(),
+    name,
+    createdAt: now,
+    updatedAt: now,
+    profileV2: source
+      ? JSON.parse(JSON.stringify(source.profileV2))
+      : { ...DEFAULT_PROFILE_V2, sections: {}, customSections: [] }
+  };
+  store.versions.push(version);
+  store.activeId = version.id;
+  await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
+  return { version: { id: version.id, name: version.name }, versions: summarizeVersions(store) };
+}
+
+async function renameVersion(payload) {
+  const store = await getProfileVersions();
+  const version = findVersion(store, String(payload?.id || ""));
+  if (!version) {
+    throw new Error("版本不存在");
+  }
+  const name = String(payload?.name || "").trim().slice(0, 40);
+  if (!name) {
+    throw new Error("版本名称不能为空");
+  }
+  version.name = name;
+  version.updatedAt = new Date().toISOString();
+  await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
+  return { versions: summarizeVersions(store) };
+}
+
+async function deleteVersion(payload) {
+  const store = await getProfileVersions();
+  const id = String(payload?.id || "");
+  const version = findVersion(store, id);
+  if (!version) {
+    throw new Error("版本不存在");
+  }
+  if (id === store.mainId) {
+    throw new Error("主简历不能删除");
+  }
+  store.versions = store.versions.filter((item) => item.id !== id);
+  if (store.activeId === id) {
+    store.activeId = store.mainId;
+  }
+  await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
+  return { versions: summarizeVersions(store) };
+}
+
+async function setActiveVersion(payload) {
+  const store = await getProfileVersions();
+  const id = String(payload?.id || "");
+  if (!findVersion(store, id)) {
+    throw new Error("版本不存在");
+  }
+  store.activeId = id;
+  await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
+  return { versions: summarizeVersions(store) };
 }
 
 async function setupUpdateAlarm() {

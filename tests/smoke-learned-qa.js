@@ -71,7 +71,7 @@ function send(message) {
   });
   assert.ok(r1.saved && r1.qa.id, "首次保存应返回 qa");
   assert.strictEqual(r1.learnedCount, 1);
-  let profile = store.profileV2;
+  let profile = store.profileVersions.versions.find((v) => v.id === store.profileVersions.mainId).profileV2;
   let section = profile.customSections.find((s) => s.key === "qa-memory");
   assert.ok(section, "应提升到 customSections[qa-memory]");
   assert.strictEqual(section.values["是否接受调剂"], "是");
@@ -85,7 +85,7 @@ function send(message) {
   assert.strictEqual(r2.qa.id, r1.qa.id, "同问题应更新同一条");
   assert.strictEqual(r2.learnedCount, 1);
   assert.strictEqual(store.learnedQA[0].answer, "否");
-  profile = store.profileV2;
+  profile = store.profileVersions.versions.find((v) => v.id === store.profileVersions.mainId).profileV2;
   section = profile.customSections.find((s) => s.key === "qa-memory");
   assert.strictEqual(section.values["是否接受调剂"], "否");
 
@@ -110,7 +110,7 @@ function send(message) {
   const d = await send({ type: "OJAF_DELETE_LEARNED_QA", payload: { id: r1.qa.id } });
   assert.ok(d.deleted);
   assert.strictEqual(d.learnedCount, 1);
-  profile = store.profileV2;
+  profile = store.profileVersions.versions.find((v) => v.id === store.profileVersions.mainId).profileV2;
   section = profile.customSections.find((s) => s.key === "qa-memory");
   assert.ok(!section.values["是否接受调剂"], "删除后 qa-memory 不应再有该问题");
   assert.strictEqual(section.values["期望工作地点"], "上海");
@@ -121,8 +121,10 @@ function send(message) {
     payload: { question: "x", normQuestion: "x", answer: " " }
   }), /答案为空/);
 
-  // 8. 设置页保存资料（删掉 qa-memory 里的问题）→ learnedQA 元数据应被同步清理
-  const profileAfterDelete = JSON.parse(JSON.stringify(store.profileV2));
+  // 8. 设置页保存主简历（删掉 qa-memory 里的问题）→ learnedQA 元数据应被同步清理
+  const profileAfterDelete = JSON.parse(
+    JSON.stringify(store.profileVersions.versions.find((v) => v.id === store.profileVersions.mainId).profileV2)
+  );
   profileAfterDelete.customSections = profileAfterDelete.customSections.filter((s) => s.key !== "qa-memory");
   await send({ type: "OJAF_SAVE_SETTINGS", payload: { profileV2: profileAfterDelete } });
   assert.strictEqual(store.learnedQA.length, 0, "qa-memory 被清空后 learnedQA 应同步清空");

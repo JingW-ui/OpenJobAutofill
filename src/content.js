@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.9.1-slim-scroll";
+  const SCRIPT_VERSION = "0.9.2-versions";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -37,6 +37,7 @@
   let autofillProgressTimer = null;
   let autofillAiState = createAutofillAiState();
   let currentLearnedQA = [];
+  let currentVersionName = "";
   let lastAutofillPlan = null;
   let lastPendingFields = [];
 
@@ -3115,6 +3116,19 @@
     }
   }
 
+  function updateProfilePanelSubtitle() {
+    if (!profilePanel || !document.contains(profilePanel)) {
+      return;
+    }
+    const subtitle = profilePanel.querySelector('[data-role="subtitle"]');
+    if (!subtitle) {
+      return;
+    }
+    subtitle.textContent = currentVersionName
+      ? `本机简历资料 · 当前版本：${currentVersionName}`
+      : "本机简历资料。用于查看、搜索和复制；开始填写会扫描并自动填写当前网页。";
+  }
+
   async function refreshCurrentProfile(options = {}) {
     if (currentProfileLoadPromise && !options.force) {
       return currentProfileLoadPromise;
@@ -3124,11 +3138,15 @@
       const settings = await sendRuntimeMessage({ type: "OJAF_GET_SETTINGS" });
       currentProfileV2 = settings.profileV2 || null;
       currentLearnedQA = Array.isArray(settings.learnedQA) ? settings.learnedQA : [];
+      const versionsMeta = settings.versions;
+      currentVersionName =
+        versionsMeta?.list?.find((version) => version.id === versionsMeta.activeId)?.name || "";
       return currentProfileV2;
     })();
 
     try {
       const profile = await currentProfileLoadPromise;
+      updateProfilePanelSubtitle();
       if (profilePanelVisible) {
         renderProfilePanel();
       }
@@ -6568,6 +6586,7 @@
 
   function renderProfilePanel() {
     const panel = ensureProfilePanel();
+    updateProfilePanelSubtitle();
     const status = panel.querySelector('[data-role="status"]');
     const collapseBtn = panel.querySelector('[data-action="collapse"]');
     const homeBtn = panel.querySelector('[data-action="home"]');

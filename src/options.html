@@ -55,6 +55,19 @@
               <p class="hint">这里按通用网申栏目拆开填写。保存后资料只保存在本机浏览器里，需要迁移或备份时再导出资料备份。</p>
             </div>
           </div>
+          <div class="version-bar">
+            <label class="version-bar-select">
+              正在编辑的版本
+              <select id="versionSelect"></select>
+            </label>
+            <div class="version-bar-actions">
+              <button id="versionCreate" class="secondary" type="button">新建空白</button>
+              <button id="versionDuplicate" class="secondary" type="button">复制当前版本</button>
+              <button id="versionRename" class="secondary" type="button">重命名</button>
+              <button id="versionDelete" class="ghost danger" type="button">删除</button>
+            </div>
+          </div>
+          <p id="versionHint" class="hint version-hint" hidden>提示：问答记忆统一保存在主简历中并自动对所有版本生效；此处编辑的是子简历的岗位定制内容。</p>
           <details id="resumeImportBox" class="resume-import">
             <summary>从简历导入（AI 解析）</summary>
             <p class="hint">粘贴简历全文，或选择 .txt / .md / .html / .pdf 文件（例如在线简历页“另存为”的 HTML、简历 PDF）。AI 会把简历结构化为资料栏目，<strong>合并进下方编辑器供你复核</strong>，确认无误后再点“保存资料”。</p>
