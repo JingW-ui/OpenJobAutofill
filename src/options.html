@@ -57,7 +57,7 @@
           </div>
           <details id="resumeImportBox" class="resume-import">
             <summary>从简历导入（AI 解析）</summary>
-            <p class="hint">粘贴简历全文，或选择 .txt / .md / .html 文件（例如在线简历页“另存为”的 HTML）。AI 会把简历结构化为资料栏目，<strong>合并进下方编辑器供你复核</strong>，确认无误后再点“保存资料”。</p>
+            <p class="hint">粘贴简历全文，或选择 .txt / .md / .html / .pdf 文件（例如在线简历页“另存为”的 HTML、简历 PDF）。AI 会把简历结构化为资料栏目，<strong>合并进下方编辑器供你复核</strong>，确认无误后再点“保存资料”。</p>
             <p class="hint resume-import-warn">隐私提示：与页面填写“只发字段名”不同，本功能会把简历原文发送到你配置的 AI 接口做一次性解析，请先确认已保存 API 设置。</p>
             <textarea id="resumeTextInput" class="resume-import-text" rows="6" placeholder="把简历全文粘贴到这里…"></textarea>
             <div class="actions">
@@ -65,7 +65,7 @@
               <button id="parseResumeFile" class="secondary" type="button">选择简历文件解析</button>
               <span id="resumeParseStatus" class="resume-import-status" aria-live="polite"></span>
             </div>
-            <input id="resumeFileInput" type="file" accept=".txt,.md,.markdown,.html,.htm,text/plain,text/markdown,text/html" hidden />
+            <input id="resumeFileInput" type="file" accept=".txt,.md,.markdown,.html,.htm,.pdf,text/plain,text/markdown,text/html,application/pdf" hidden />
           </details>
           <div id="profileSectionEditor" class="profile-section-editor"></div>
           <div class="actions profile-actions">
@@ -210,6 +210,7 @@
     </main>
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
+    <script src="../vendor/pdf/pdf.min.js"></script>
     <script src="./options.js"></script>
   </body>
 </html>

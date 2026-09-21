@@ -769,6 +769,12 @@ async function importResumeFromFile() {
     return;
   }
   try {
+    const isPdf = /\.pdf$/i.test(file.name || "") || file.type === "application/pdf";
+    if (isPdf) {
+      const text = await extractTextFromPdf(file);
+      await runResumeParse(text);
+      return;
+    }
     const raw = await file.text();
     const looksHtml =
       /\.html?$/i.test(file.name || "") || /^\s*(<!doctype\s+html|<html[\s>])/i.test(raw.slice(0, 600));
@@ -781,6 +787,52 @@ async function importResumeFromFile() {
       fields.resumeFileInput.value = "";
     }
   }
+}
+
+const PDF_MAX_PAGES = 30;
+
+async function extractTextFromPdf(file) {
+  const pdfjsLib = window.pdfjsLib;
+  if (!pdfjsLib) {
+    throw new Error("PDF 解析组件未加载，请刷新设置页后重试。");
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("vendor/pdf/pdf.worker.min.js");
+
+  const data = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const pageCount = Math.min(pdf.numPages || 1, PDF_MAX_PAGES);
+  const pageTexts = [];
+
+  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const lines = [];
+    let lastY = null;
+    for (const item of content.items || []) {
+      const y = item.transform ? item.transform[5] : null;
+      if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) {
+        lines.push("\n");
+      }
+      const text = String(item.str || "").trim();
+      if (text) {
+        lines.push(text);
+      }
+      if (y !== null) {
+        lastY = y;
+      }
+    }
+    pageTexts.push(lines.join(" "));
+  }
+
+  const text = pageTexts
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!text) {
+    throw new Error("PDF 中没有抽取到文字（可能是扫描件图片型 PDF，请改用文本粘贴）。");
+  }
+  return text;
 }
 
 function extractTextFromHtml(htmlText) {
