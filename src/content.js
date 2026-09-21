@@ -2142,6 +2142,8 @@
         right: 18px;
         bottom: 18px;
         width: min(360px, calc(100vw - 36px));
+        max-height: calc(100dvh - 36px);
+        overflow-y: auto;
         padding: 14px;
         border: 1px solid rgba(38, 58, 44, 0.14);
         border-radius: 18px;
@@ -2309,6 +2311,30 @@
         border-color: #9aa39d;
         color: #9aa39d;
         cursor: default;
+      }
+      /* 细滚动条：只作用于插件自己的浮层与资料面板，不影响宿主页面 */
+      #${FLOAT_ID},
+      #${PANEL_ID} {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(38, 58, 44, 0.3) transparent;
+      }
+      #${FLOAT_ID} ::-webkit-scrollbar,
+      #${PANEL_ID} ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      #${FLOAT_ID} ::-webkit-scrollbar-track,
+      #${PANEL_ID} ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #${FLOAT_ID} ::-webkit-scrollbar-thumb,
+      #${PANEL_ID} ::-webkit-scrollbar-thumb {
+        background: rgba(38, 58, 44, 0.2);
+        border-radius: 999px;
+      }
+      #${FLOAT_ID} ::-webkit-scrollbar-thumb:hover,
+      #${PANEL_ID} ::-webkit-scrollbar-thumb:hover {
+        background: rgba(38, 58, 44, 0.42);
       }
       #${PANEL_ID} {
         position: fixed;

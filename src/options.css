@@ -748,6 +748,35 @@ pre.error {
 
 }
 
+/* ---- 细滚动条（页面级 + 内部滚动区） ---- */
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(38, 58, 44, 0.3) transparent;
+  scrollbar-gutter: stable;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(38, 58, 44, 0.2);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(38, 58, 44, 0.42);
+  background-clip: padding-box;
+}
+
 /* ---- 简历解析导入 ---- */
 
 .resume-import {

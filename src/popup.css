@@ -166,3 +166,28 @@ button.ghost.full {
 .error {
   color: var(--danger);
 }
+
+/* ---- 细滚动条 ---- */
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(38, 58, 44, 0.3) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(38, 58, 44, 0.2);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(38, 58, 44, 0.42);
+}
