@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.9.3-pageparse";
+  const SCRIPT_VERSION = "0.9.4-pageprogress";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -615,6 +615,12 @@
     if (/填写匹配项/.test(text)) {
       return { index: 5, total: 6, label: "填写表单" };
     }
+    if (/^解析完成$|^解析失败$/.test(text)) {
+      return { index: 0, total: 0, label: text };
+    }
+    if (/读取页面文本|AI 解析页面简历|保存草稿/.test(text)) {
+      return { index: 0, total: 0, label: "解析页面简历" };
+    }
     return { index: 6, total: 6, label: "完成复核" };
   }
 
@@ -903,7 +909,11 @@
       return "";
     }
     const label = autofillProgress.stepLabel || autofillProgress.stage || "处理当前页面";
-    return /^正在/.test(label) ? label : `正在${label}`;
+    // 终态标签（解析完成/解析失败等）不加"正在"前缀
+    if (/^正在|完成$|失败$/.test(label)) {
+      return label;
+    }
+    return `正在${label}`;
   }
 
   function getAutofillProgressDetail() {
@@ -6970,6 +6980,31 @@
 
     if (message.type === "OJAF_EXTRACT_PAGE_TEXT") {
       return extractPageTextForResume();
+    }
+
+    // 页面简历解析的进度推送：复用右下角浮动面板（阶段 + 进度条 + 已等待时间）
+    if (message.type === "OJAF_PAGE_PARSE_PROGRESS") {
+      setAutofillProgress(
+        String(message.stageLabel || "解析页面简历"),
+        Math.max(0, Math.min(100, Number(message.percent || 0) || 10)),
+        String(message.detail || "")
+      );
+      return {};
+    }
+
+    if (message.type === "OJAF_PAGE_PARSE_DONE") {
+      clearAutofillProgress();
+      if (message.silent) {
+        return {};
+      }
+      if (message.ok) {
+        setAutofillProgress("解析完成", 100, String(message.message || ""));
+        setTimeout(() => clearAutofillProgress(), 3200);
+      } else {
+        // 失败常驻浮动层，由用户手动关闭
+        setAutofillProgress("解析失败", 100, String(message.message || "未知错误"));
+      }
+      return {};
     }
 
     return undefined;

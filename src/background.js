@@ -40,6 +40,8 @@ const MAX_PARSED_CUSTOM_SECTIONS = 20;
 const PROFILE_VERSIONS_KEY = "profileVersions";
 const MAIN_VERSION_NAME = "主简历";
 const MAX_PROFILE_VERSIONS = 20;
+const PAGE_PARSE_STATE_KEY = "pageParseState";
+const PAGE_PARSE_STALE_MS = 3 * 60 * 1000;
 
 // 简历解析的内置栏目 schema 兜底（popup 解析当前页时使用；与 options.js 的 STRUCTURED_RESUME_SECTIONS 保持同步）
 const DEFAULT_RESUME_SCHEMA_HINT = [
@@ -198,6 +200,12 @@ async function handleMessage(message) {
       return setActiveVersion(message.payload || {});
     case "OJAF_IMPORT_PARSED_VERSION":
       return importParsedVersion(message.payload || {});
+    case "OJAF_START_PAGE_PARSE":
+      return startPageParse(message.payload || {});
+    case "OJAF_GET_PAGE_PARSE_STATE":
+      return getPageParseState();
+    case "OJAF_DISMISS_PAGE_PARSE":
+      return dismissPageParse();
     case "OJAF_LIST_MODELS":
       return listModels(message.payload || {});
     case "OJAF_TEST_CONNECTION":
@@ -618,6 +626,173 @@ async function importParsedVersion(payload) {
   store.versions.push(version);
   await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
   return { version: { id: version.id, name: version.name }, versions: summarizeVersions(store) };
+}
+
+// ---- 解析当前页为简历：后台编排 + 状态机（popup 只是触发与展示层，关掉不影响解析） ----
+
+let pageParseInFlight = false;
+
+async function getPageParseState() {
+  const values = await chrome.storage.local.get([PAGE_PARSE_STATE_KEY]);
+  const state = values[PAGE_PARSE_STATE_KEY];
+  return state && typeof state === "object" ? state : { status: "idle" };
+}
+
+async function setPageParseState(patch) {
+  const current = await getPageParseState();
+  const next = { ...current, ...patch };
+  await chrome.storage.local.set({ [PAGE_PARSE_STATE_KEY]: next });
+  return next;
+}
+
+async function dismissPageParse() {
+  await setPageParseState({ status: "idle", error: "", result: null, text: "", pageInfo: null });
+  return { dismissed: true };
+}
+
+// 简历页置信度：常见简历关键词命中数（低于阈值则先向用户确认，避免白烧一次 AI 调用）
+function resumeTextKeywordHits(text) {
+  const keywords = ["姓名", "电话", "手机", "邮箱", "教育", "学校", "大学", "专业", "学历", "本科", "硕士", "实习", "工作", "经历", "项目"];
+  let hits = 0;
+  for (const keyword of keywords) {
+    if (text.includes(keyword)) {
+      hits += 1;
+    }
+  }
+  return hits;
+}
+
+async function notifyTabPageParse(tabId, message) {
+  if (!tabId) {
+    return;
+  }
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+  } catch {
+    // 页面可能已跳转或刷新，进度展示失败不影响主流程
+  }
+}
+
+async function extractPageTextFromTab(tabId) {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["src/content.js"] });
+  const response = await chrome.tabs.sendMessage(tabId, { type: "OJAF_EXTRACT_PAGE_TEXT" });
+  if (!response?.ok) {
+    throw new Error(response?.error || "页面文本读取失败");
+  }
+  return response.data || {};
+}
+
+async function startPageParse(payload) {
+  if (pageParseInFlight) {
+    throw new Error("已有页面解析任务进行中，请稍候");
+  }
+
+  const force = Boolean(payload?.force);
+  const retry = Boolean(payload?.retry);
+  const tabId = Number(payload?.tabId || 0);
+  const prior = await getPageParseState();
+  if (prior.status === "running" && Date.now() - Number(prior.startedAt || 0) < PAGE_PARSE_STALE_MS) {
+    throw new Error("已有页面解析任务进行中，请稍候");
+  }
+
+  pageParseInFlight = true;
+  const startedAt = Date.now();
+  let text = "";
+  let pageInfo = null;
+
+  try {
+    // 1. 抽取页面文本（重试时复用缓存文本）
+    if ((retry || force) && typeof prior.text === "string" && prior.text.length >= 100) {
+      text = prior.text;
+      pageInfo = prior.pageInfo || null;
+    } else {
+      if (!tabId) {
+        throw new Error("缺少目标标签页");
+      }
+      await setPageParseState({ status: "running", stage: "extract", startedAt, error: "", result: null });
+      await notifyTabPageParse(tabId, {
+        type: "OJAF_PAGE_PARSE_PROGRESS",
+        stageLabel: "读取页面文本",
+        percent: 12,
+        detail: "正在抽取当前页面正文"
+      });
+      const extracted = await extractPageTextFromTab(tabId);
+      text = String(extracted.text || "").trim();
+      pageInfo = {
+        url: extracted.url || "",
+        title: extracted.title || "",
+        hostname: extracted.hostname || "",
+        truncated: Boolean(extracted.truncated)
+      };
+      if (text.length < 100) {
+        throw new Error("当前页没有读到足够的文字内容，看起来不是简历页");
+      }
+    }
+
+    // 2. 简历页置信度预检（重试/强制跳过）
+    const hits = resumeTextKeywordHits(text);
+    if (!force && !retry && hits < 3) {
+      await setPageParseState({
+        status: "confirm",
+        stage: "",
+        startedAt,
+        text,
+        pageInfo,
+        reason: `当前页仅命中 ${hits} 个简历常见关键词，可能不是简历页。确认要继续解析吗？（会消耗一次 AI 调用）`
+      });
+      await notifyTabPageParse(tabId, { type: "OJAF_PAGE_PARSE_DONE", ok: false, message: "已暂停：等待你确认是否继续解析", silent: true });
+      return { status: "confirm", hits };
+    }
+
+    // 3. AI 解析
+    await setPageParseState({ status: "running", stage: "ai", startedAt, text, pageInfo, error: "" });
+    await notifyTabPageParse(tabId, {
+      type: "OJAF_PAGE_PARSE_PROGRESS",
+      stageLabel: "AI 解析页面简历",
+      percent: 22,
+      detail: `正在结构化 ${text.length} 字符的页面内容，通常需要十几秒`
+    });
+    const parsed = await parseResume({ resumeText: text });
+
+    // 4. 存为新版本草稿并打开设置页复核
+    await notifyTabPageParse(tabId, { type: "OJAF_PAGE_PARSE_PROGRESS", stageLabel: "保存草稿", percent: 94, detail: "正在生成新版本草稿" });
+    const date = new Date();
+    const mmdd = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const imported = await importParsedVersion({
+      name: `导入-${pageInfo?.hostname || "页面"}-${mmdd}`,
+      profileV2: parsed.profileV2
+    });
+
+    const elapsedSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    await setPageParseState({
+      status: "done",
+      stage: "",
+      text,
+      pageInfo,
+      result: {
+        versionId: imported.version.id,
+        versionName: imported.version.name,
+        values: parsed.stats?.values || 0,
+        sections: parsed.stats?.sections || 0,
+        elapsedSec
+      }
+    });
+    await notifyTabPageParse(tabId, {
+      type: "OJAF_PAGE_PARSE_DONE",
+      ok: true,
+      message: `解析完成：识别 ${parsed.stats?.values || 0} 个字段值，用时 ${elapsedSec}s，正在打开设置页复核…`
+    });
+
+    const url = chrome.runtime.getURL(`src/options.html?focusVersion=${encodeURIComponent(imported.version.id)}`);
+    await chrome.tabs.create({ url });
+    return { status: "done", versionId: imported.version.id };
+  } catch (error) {
+    await setPageParseState({ status: "error", stage: "", error: error.message, text: text || "", pageInfo });
+    await notifyTabPageParse(tabId, { type: "OJAF_PAGE_PARSE_DONE", ok: false, message: `解析失败：${error.message}` });
+    throw error;
+  } finally {
+    pageParseInFlight = false;
+  }
 }
 
 async function setupUpdateAlarm() {

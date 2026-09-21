@@ -43,6 +43,8 @@ async function initialize() {
   try {
     setStatus("点击开始填写后，右下角会实时显示当前是本地规则还是 AI；AI 不可用也能继续用本地规则填写。");
     await syncVersions();
+    await syncPageParseState();
+    startPageParsePolling();
     await syncUpdateStatus();
     await syncRuntimeState();
   } catch (error) {
@@ -87,64 +89,109 @@ async function switchVersion(versionId) {
   }
 }
 
-// ---- 解析当前页为简历：页面文本 → AI 解析 → 存为新版本草稿 → 打开设置页复核 ----
+// ---- 解析当前页为简历：popup 只做触发与状态展示，编排全部在 background（弹窗关闭不影响解析） ----
+
+let pageParsePollTimer = 0;
+
+const PAGE_PARSE_STAGE_LABELS = {
+  extract: "读取页面文本",
+  ai: "AI 解析页面简历",
+  save: "保存草稿"
+};
+
+function startPageParsePolling() {
+  if (pageParsePollTimer) {
+    return;
+  }
+  pageParsePollTimer = window.setInterval(() => {
+    void syncPageParseState();
+  }, 1200);
+}
+
+async function syncPageParseState() {
+  try {
+    const state = await sendRuntimeMessage({ type: "OJAF_GET_PAGE_PARSE_STATE" });
+    renderPageParseState(state || { status: "idle" });
+  } catch {
+    // 状态读取失败不阻塞主流程
+  }
+}
+
+function renderPageParseState(state) {
+  const button = els.parsePageResumeBtn;
+  if (!button) {
+    return;
+  }
+  const status = state?.status || "idle";
+
+  if (status === "running") {
+    button.disabled = true;
+    button.textContent = "解析中…";
+    const elapsed = Math.max(0, Math.floor((Date.now() - Number(state.startedAt || Date.now())) / 1000));
+    const stage = PAGE_PARSE_STAGE_LABELS[state.stage] || "处理中";
+    setStatus(`正在解析当前页简历：${stage}（已等待 ${elapsed} 秒）。关闭本弹窗不影响解析，页面右下角有实时进度。`);
+    return;
+  }
+
+  button.disabled = false;
+  if (status === "confirm") {
+    button.textContent = "仍要解析";
+    setStatus(state.reason || "当前页可能不是简历页，确认要继续解析吗？", true);
+    return;
+  }
+  if (status === "done") {
+    button.textContent = "打开设置页复核";
+    const result = state.result || {};
+    setStatus(
+      `已生成新版本草稿「${result.versionName || ""}」（识别 ${result.values || 0} 个字段值，用时 ${result.elapsedSec || "?"} 秒）。点击按钮打开设置页复核保存。`
+    );
+    return;
+  }
+  if (status === "error") {
+    button.textContent = state.text ? "重试解析" : "重试解析";
+    setStatus(`上次解析失败：${state.error || "未知错误"}${state.text ? "。点重试将直接复用已抽取的页面文本，不重复读取页面。" : ""}`, true);
+    return;
+  }
+
+  button.textContent = "解析当前页为简历";
+}
 
 async function parseCurrentPageAsResume() {
-  const button = els.parsePageResumeBtn;
-  const originalLabel = button?.textContent || "解析当前页为简历";
-  if (button) {
-    button.disabled = true;
-    button.textContent = "解析中...";
-  }
+  let state = null;
   try {
-    setStatus("正在读取当前页面文本…");
-    const extract = (await sendToActiveTab({ type: "OJAF_EXTRACT_PAGE_TEXT" }))?.data || {};
-    const text = String(extract.text || "").trim();
-    if (text.length < 100) {
-      setStatus("当前页没有读到足够的文字内容，看起来不是简历页。请到简历页面再试。", true);
-      return;
-    }
+    state = await sendRuntimeMessage({ type: "OJAF_GET_PAGE_PARSE_STATE" });
+  } catch {
+    // 读取失败按 idle 处理
+  }
+  const status = state?.status || "idle";
 
-    setStatus("正在用 AI 解析页面简历（页面内容会发送到你配置的 AI 接口）…");
-    const parsed = await sendRuntimeMessage({
-      type: "OJAF_PARSE_RESUME",
-      payload: { resumeText: text }
+  // done 状态：按钮语义为"打开设置页复核"
+  if (status === "done" && state?.result?.versionId) {
+    const url = chrome.runtime.getURL(`src/options.html?focusVersion=${encodeURIComponent(state.result.versionId)}`);
+    chrome.tabs.create({ url });
+    return;
+  }
+
+  const [tab] = await queryTabs({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    setStatus("没有找到当前标签页。", true);
+    return;
+  }
+
+  try {
+    await sendRuntimeMessage({
+      type: "OJAF_START_PAGE_PARSE",
+      payload: {
+        tabId: tab.id,
+        force: status === "confirm",
+        retry: status === "error"
+      }
     });
-    if (!parsed?.profileV2) {
-      throw new Error("AI 未返回可用结果");
-    }
-
-    const date = new Date();
-    const mmdd = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    const suggestedName = `导入-${extract.hostname || "页面"}-${mmdd}`;
-    const imported = await sendRuntimeMessage({
-      type: "OJAF_IMPORT_PARSED_VERSION",
-      payload: { name: suggestedName, profileV2: parsed.profileV2 }
-    });
-
     await syncVersions();
-    const versionId = imported?.version?.id || "";
-    const versionName = imported?.version?.name || suggestedName;
-    setStatus(`已生成新版本草稿「${versionName}」，请在打开的设置页复核后保存；保存后可在弹窗切换为当前填写版本。`);
-    const url = chrome.runtime.getURL(`src/options.html?focusVersion=${encodeURIComponent(versionId)}`);
-    await new Promise((resolve, reject) => {
-      chrome.tabs.create({ url }, () => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message));
-        } else {
-          resolve();
-        }
-      });
-    });
   } catch (error) {
     setStatus(`解析当前页失败：${error.message}`, true);
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = originalLabel;
-    }
   }
+  await syncPageParseState();
 }
 
 async function syncRuntimeState(options = {}) {
