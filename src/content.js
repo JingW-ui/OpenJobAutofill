@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.9.0-memory-cn";
+  const SCRIPT_VERSION = "0.9.1-slim-scroll";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -2316,12 +2316,12 @@
       #${FLOAT_ID},
       #${PANEL_ID} {
         scrollbar-width: thin;
-        scrollbar-color: rgba(38, 58, 44, 0.3) transparent;
+        scrollbar-color: rgba(38, 58, 44, 0.22) transparent;
       }
       #${FLOAT_ID} ::-webkit-scrollbar,
       #${PANEL_ID} ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
+        width: 4px;
+        height: 4px;
       }
       #${FLOAT_ID} ::-webkit-scrollbar-track,
       #${PANEL_ID} ::-webkit-scrollbar-track {
@@ -2329,12 +2329,12 @@
       }
       #${FLOAT_ID} ::-webkit-scrollbar-thumb,
       #${PANEL_ID} ::-webkit-scrollbar-thumb {
-        background: rgba(38, 58, 44, 0.2);
+        background: rgba(38, 58, 44, 0.16);
         border-radius: 999px;
       }
       #${FLOAT_ID} ::-webkit-scrollbar-thumb:hover,
       #${PANEL_ID} ::-webkit-scrollbar-thumb:hover {
-        background: rgba(38, 58, 44, 0.42);
+        background: rgba(38, 58, 44, 0.34);
       }
       #${PANEL_ID} {
         position: fixed;

@@ -123,7 +123,7 @@
             模型名
             <input id="model" type="text" list="modelOptions" placeholder="例如 your-custom-model" />
             <datalist id="modelOptions"></datalist>
-            <span class="field-help">可以手动输入任意模型名；刷新候选模型只会提供建议，不会限制这里的输入。</span>
+            <span class="field-help">内网代理可用模型：glm-5.3-flash / kimi-k3 / auto_deepseek_plan（注意不带 [1m] 后缀）。也可手动输入任意模型名；刷新候选模型对内网代理不可用。</span>
           </label>
 
           <label>
@@ -193,6 +193,7 @@
             <button id="saveApiSettings" type="submit">保存 API 设置</button>
             <button id="refreshModels" class="secondary" type="button">刷新候选模型</button>
             <button id="testConnection" class="secondary" type="button">测试 API 连接</button>
+            <button id="restoreDefaultApi" class="ghost" type="button">恢复内网默认</button>
           </div>
 
           <p id="apiFeedback" class="api-feedback" aria-live="polite"></p>

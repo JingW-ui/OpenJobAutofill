@@ -28,6 +28,7 @@ const fields = {
   apiFeedback: document.getElementById("apiFeedback"),
   apiPreviewBox: document.getElementById("apiPreviewBox"),
   apiPreview: document.getElementById("apiPreview"),
+  restoreDefaultApiButton: document.getElementById("restoreDefaultApi"),
   checkUpdateButton: document.getElementById("checkUpdate"),
   openUpdateButton: document.getElementById("openUpdatePage"),
   updateFeedback: document.getElementById("updateFeedback"),
@@ -475,6 +476,7 @@ document.getElementById("settingsForm").addEventListener("submit", async (event)
 });
 document.getElementById("refreshModels").addEventListener("click", refreshModelList);
 document.getElementById("testConnection").addEventListener("click", testConnection);
+fields.restoreDefaultApiButton?.addEventListener("click", restoreDefaultApi);
 fields.saveProfileButton.addEventListener("click", saveProfile);
 document.getElementById("exportProfile").addEventListener("click", exportProfile);
 document.getElementById("importProfile").addEventListener("click", () => fields.profileFileInput.click());
@@ -681,6 +683,19 @@ async function saveApiSettings() {
     showToast(`保存失败：${error.message}`, "error");
   } finally {
     setApiSaving(false);
+  }
+}
+
+async function restoreDefaultApi() {
+  try {
+    const { apiConfig } = await sendRuntimeMessage({ type: "OJAF_GET_DEFAULT_API_CONFIG" });
+    applyApiConfig(apiConfig);
+    await saveApiSettings();
+    setStatus("已恢复内网默认代理配置（127.0.0.1:15721，glm-5.3-flash）。");
+    showToast("已恢复内网默认配置");
+  } catch (error) {
+    setStatus(`恢复默认失败：${error.message}`, true);
+    showToast(`恢复默认失败：${error.message}`, "error");
   }
 }
 

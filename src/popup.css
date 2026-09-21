@@ -175,8 +175,8 @@ html {
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -185,9 +185,9 @@ html {
 
 ::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(38, 58, 44, 0.2);
+  background: rgba(38, 58, 44, 0.16);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(38, 58, 44, 0.42);
+  background: rgba(38, 58, 44, 0.34);
 }

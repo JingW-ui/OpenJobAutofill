@@ -68,13 +68,37 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 
   await setupUpdateAlarm().catch(() => undefined);
+  await migrateLegacyApiConfig().catch(() => undefined);
   void checkForUpdate({ reason: "installed" }).catch(() => undefined);
 });
 
 chrome.runtime.onStartup?.addListener(() => {
   void setupUpdateAlarm().catch(() => undefined);
+  void migrateLegacyApiConfig().catch(() => undefined);
   void refreshUpdateBadge().catch(() => undefined);
 });
+
+// 旧版默认配置（api.openai.com + 空 Key）自愈迁移到内置内网代理；用户自定义配置不受影响
+async function migrateLegacyApiConfig() {
+  const values = await chrome.storage.local.get([STORAGE_KEYS.apiConfig]);
+  const stored = values[STORAGE_KEYS.apiConfig];
+  if (!stored || typeof stored !== "object") {
+    return; // 全新安装由 onInstalled 播种默认配置
+  }
+  const apiKey = String(stored.apiKey || "").trim();
+  if (apiKey) {
+    return; // 用户已有可用 Key，尊重
+  }
+  const baseUrl = String(stored.baseUrl || "").trim();
+  const isLegacyDefault = !baseUrl || baseUrl === "https://api.openai.com/v1";
+  const isAlreadyNew = baseUrl === DEFAULT_API_CONFIG.baseUrl;
+  if (!isLegacyDefault || isAlreadyNew) {
+    return; // 自定义了其他 endpoint（没带 Key）也尊重，不覆盖
+  }
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.apiConfig]: { ...DEFAULT_API_CONFIG }
+  });
+}
 
 chrome.alarms?.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM_NAME) {
@@ -83,6 +107,7 @@ chrome.alarms?.onAlarm.addListener((alarm) => {
 });
 
 void setupUpdateAlarm().catch(() => undefined);
+void migrateLegacyApiConfig().catch(() => undefined);
 void refreshUpdateBadge().catch(() => undefined);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -131,6 +156,8 @@ async function handleMessage(message) {
       return touchLearnedQA(message.payload || {});
     case "OJAF_PARSE_RESUME":
       return parseResume(message.payload || {});
+    case "OJAF_GET_DEFAULT_API_CONFIG":
+      return { apiConfig: { ...DEFAULT_API_CONFIG } };
     case "OJAF_LIST_MODELS":
       return listModels(message.payload || {});
     case "OJAF_TEST_CONNECTION":
