@@ -7,7 +7,8 @@ const els = {
   updateStatus: document.getElementById("updateStatus"),
   checkUpdateBtn: document.getElementById("checkUpdateBtn"),
   openUpdateBtn: document.getElementById("openUpdateBtn"),
-  versionSelect: document.getElementById("versionSelect")
+  versionSelect: document.getElementById("versionSelect"),
+  parsePageResumeBtn: document.getElementById("parsePageResumeBtn")
 };
 
 const DEFAULT_START_LABEL = els.startAutofillBtn.textContent;
@@ -31,6 +32,9 @@ els.openUpdateBtn.addEventListener("click", () => {
 });
 els.versionSelect?.addEventListener("change", () => {
   void switchVersion(els.versionSelect.value);
+});
+els.parsePageResumeBtn?.addEventListener("click", () => {
+  void parseCurrentPageAsResume();
 });
 
 initialize();
@@ -80,6 +84,66 @@ async function switchVersion(versionId) {
   } catch (error) {
     setStatus(`切换版本失败：${error.message}`, true);
     await syncVersions();
+  }
+}
+
+// ---- 解析当前页为简历：页面文本 → AI 解析 → 存为新版本草稿 → 打开设置页复核 ----
+
+async function parseCurrentPageAsResume() {
+  const button = els.parsePageResumeBtn;
+  const originalLabel = button?.textContent || "解析当前页为简历";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "解析中...";
+  }
+  try {
+    setStatus("正在读取当前页面文本…");
+    const extract = (await sendToActiveTab({ type: "OJAF_EXTRACT_PAGE_TEXT" }))?.data || {};
+    const text = String(extract.text || "").trim();
+    if (text.length < 100) {
+      setStatus("当前页没有读到足够的文字内容，看起来不是简历页。请到简历页面再试。", true);
+      return;
+    }
+
+    setStatus("正在用 AI 解析页面简历（页面内容会发送到你配置的 AI 接口）…");
+    const parsed = await sendRuntimeMessage({
+      type: "OJAF_PARSE_RESUME",
+      payload: { resumeText: text }
+    });
+    if (!parsed?.profileV2) {
+      throw new Error("AI 未返回可用结果");
+    }
+
+    const date = new Date();
+    const mmdd = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const suggestedName = `导入-${extract.hostname || "页面"}-${mmdd}`;
+    const imported = await sendRuntimeMessage({
+      type: "OJAF_IMPORT_PARSED_VERSION",
+      payload: { name: suggestedName, profileV2: parsed.profileV2 }
+    });
+
+    await syncVersions();
+    const versionId = imported?.version?.id || "";
+    const versionName = imported?.version?.name || suggestedName;
+    setStatus(`已生成新版本草稿「${versionName}」，请在打开的设置页复核后保存；保存后可在弹窗切换为当前填写版本。`);
+    const url = chrome.runtime.getURL(`src/options.html?focusVersion=${encodeURIComponent(versionId)}`);
+    await new Promise((resolve, reject) => {
+      chrome.tabs.create({ url }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message));
+        } else {
+          resolve();
+        }
+      });
+    });
+  } catch (error) {
+    setStatus(`解析当前页失败：${error.message}`, true);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
   }
 }
 

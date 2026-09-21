@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.9.2-versions";
+  const SCRIPT_VERSION = "0.9.3-pageparse";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -6906,6 +6906,44 @@
     return element;
   }
 
+  // ---- 解析当前页为简历：抽取页面正文文本（渲染态 innerText，保留换行结构） ----
+
+  function extractPageTextForResume() {
+    const MAX_TEXT_LENGTH = 20000;
+    const roots = [
+      document.querySelector("main"),
+      document.querySelector("article"),
+      document.querySelector('[role="main"]'),
+      document.body
+    ].filter(Boolean);
+
+    let text = "";
+    for (const root of roots) {
+      // 防御：剔除插件自身注入的浮层（正常挂在 documentElement 下，不随 body 进来）
+      const clone = root.cloneNode(true);
+      clone.querySelectorAll(`#${FLOAT_ID}, #${PANEL_ID}`).forEach((el) => el.remove());
+      const candidate = String(clone.innerText || "")
+        .replace(/\r/g, "")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      if (candidate.length > text.length) {
+        text = candidate;
+      }
+      if (text.length >= 200) {
+        break;
+      }
+    }
+
+    return {
+      text: text.slice(0, MAX_TEXT_LENGTH),
+      truncated: text.length > MAX_TEXT_LENGTH,
+      url: location.href,
+      title: document.title || "",
+      hostname: location.hostname || ""
+    };
+  }
+
   async function handleContentMessage(message) {
     if (message.type === "OJAF_SHOW_PROFILE_PANEL") {
       showProfilePanel();
@@ -6928,6 +6966,10 @@
     if (message.type === "OJAF_CLEAR_MARKS") {
       clearMarks();
       return {};
+    }
+
+    if (message.type === "OJAF_EXTRACT_PAGE_TEXT") {
+      return extractPageTextForResume();
     }
 
     return undefined;

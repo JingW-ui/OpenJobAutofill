@@ -17,6 +17,7 @@ If this project saves you time, a GitHub Star would be appreciated. Issues and f
 - Resume versions: one main resume plus per-position sub resumes; switch the active version right in the popup. Q&A memory lives in the main resume and applies to every version.
 - One-click scanning for the current job application page: determined fields are filled, and the rest are marked as pending.
 - AI resume import from pasted text or .txt / .md / .html / .pdf files: parsed results are merged into the profile editor for your review before saving (note: this feature sends the resume text to your configured AI endpoint once; PDF text is extracted locally by the bundled pdf.js — scanned image-only PDFs are not supported, paste text instead).
+- Parse the current page as a resume: on an online resume page (e.g. "My Resume" on Boss/Zhilian), click "Parse this page" in the popup — the page text is extracted, AI-parsed into a new draft version, and opened in the settings page for your review.
 - Resume data stays on your device and does not need to be uploaded to a cloud service.
 - Supports common inputs, textareas, radio buttons, checkboxes, dropdowns, and date-like fields.
 - A profile panel lets you browse, search, and manually copy saved profile data for orange pending fields.

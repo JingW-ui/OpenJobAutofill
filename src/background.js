@@ -40,6 +40,29 @@ const MAX_PARSED_CUSTOM_SECTIONS = 20;
 const PROFILE_VERSIONS_KEY = "profileVersions";
 const MAIN_VERSION_NAME = "主简历";
 const MAX_PROFILE_VERSIONS = 20;
+
+// 简历解析的内置栏目 schema 兜底（popup 解析当前页时使用；与 options.js 的 STRUCTURED_RESUME_SECTIONS 保持同步）
+const DEFAULT_RESUME_SCHEMA_HINT = [
+  { key: "basic", title: "基本信息", kind: "simple", fields: ["姓名", "姓", "名", "英文名", "性别", "出生日期", "民族", "国籍（国家或地区）", "电话", "邮箱", "微信号", "QQ", "证件号码类型", "证件号码", "政治面貌", "婚姻状况", "户籍", "籍贯", "生源地", "现居住城市", "现居住详细地址", "通讯地址", "邮政编码", "身高", "体重", "健康状况", "工作年限", "紧急联系人", "紧急联系人电话"] },
+  { key: "intention", title: "求职意向", kind: "repeat", fields: ["意向岗位", "预计入职时间", "当前薪资", "期望工作城市", "期望薪资", "面试城市", "是否接受调剂"] },
+  { key: "education", title: "教育经历", kind: "repeat", fields: ["开始时间", "结束时间", "学校", "专业", "学制", "城市", "学位", "学历", "学习形式", "学院（院系）", "培养方式", "专业课程", "研究方向", "成绩", "班级排名", "专业排名"] },
+  { key: "internship", title: "实习经历", kind: "repeat", fields: ["开始时间", "结束时间", "公司", "部门", "行业", "地点", "职位", "工作内容", "工作成果", "证明人姓名", "证明人联系方式", "离职原因"] },
+  { key: "work", title: "工作经历", kind: "repeat", fields: ["开始时间", "结束时间", "公司", "部门", "行业", "地点", "职位", "工作内容", "工作成果", "证明人姓名", "证明人联系方式", "离职原因"] },
+  { key: "performance", title: "绩效考核", kind: "repeat", fields: ["考核年度", "绩效考核等级", "年度绩效排名", "绩效证明人", "绩效证明人联系方式", "绩效说明"] },
+  { key: "project", title: "项目经历/实践活动", kind: "repeat", fields: ["开始时间", "结束时间", "职位", "项目名称", "项目内容", "本人职责", "项目成果", "项目链接", "证明人姓名", "证明人联系方式"] },
+  { key: "student", title: "干部任职经历（在校职务）", kind: "repeat", fields: ["开始时间", "结束时间", "组织名称", "职位", "工作内容", "本人职责"] },
+  { key: "awards", title: "奖惩情况", kind: "repeat", fields: ["奖惩时间", "奖惩名称", "颁奖单位", "奖励等级", "奖惩描述", "证明人"] },
+  { key: "language", title: "外语能力", kind: "repeat", fields: ["获得时间", "外语种类", "证书名称（技能名称）", "成绩", "掌握程度", "听说能力", "读写能力", "有效期"] },
+  { key: "computer", title: "计算机技能（IT技能）", kind: "repeat", fields: ["获得时间", "证书名称（技能名称）", "成绩", "掌握程度"] },
+  { key: "certificates", title: "证书", kind: "repeat", fields: ["证书获得时间", "证书名称（技能名称）", "证书编号", "授予单位", "证书说明"] },
+  { key: "family", title: "家庭情况", kind: "repeat", fields: ["姓名", "关系", "出生日期", "电话", "公司", "职位", "政治面貌", "联系地址"] },
+  { key: "training", title: "培训经历", kind: "repeat", fields: ["开始时间", "结束时间", "培训名称", "培训机构", "培训地点", "培训课程", "培训获得证书", "培训内容"] },
+  { key: "papers", title: "论文和著作", kind: "repeat", fields: ["发表时间", "刊物名称", "刊物层级", "论文名称", "论文描述"] },
+  { key: "patent", title: "专利", kind: "repeat", fields: ["发表时间", "专利名称", "专利编号", "专利类型", "专利成果"] },
+  { key: "self", title: "自我描述", kind: "simple", fields: ["自我描述", "自我评价"] },
+  { key: "declarations", title: "有关声明", kind: "simple", fields: ["是否存在亲属在应聘单位工作", "是否患有影响工作的疾病", "是否存在不良行为记录", "是否享有境外长期或永久居留权", "是否同意背景调查", "本人声明以上填写内容与事实完全相符"] },
+  { key: "other", title: "其他信息", kind: "simple", fields: ["受到奖励/学术成果", "社会/校园活动", "爱好及专长", "招聘信息来源", "GitHub", "个人主页"] }
+];
 const UPDATE_ALARM_NAME = "OJAF_CHECK_RELEASE_UPDATE";
 const UPDATE_CHECK_INTERVAL_MINUTES = 12 * 60;
 const UPDATE_REPOSITORY = "JingW-ui/OpenJobAutofill";
@@ -173,6 +196,8 @@ async function handleMessage(message) {
       return deleteVersion(message.payload || {});
     case "OJAF_SET_ACTIVE_VERSION":
       return setActiveVersion(message.payload || {});
+    case "OJAF_IMPORT_PARSED_VERSION":
+      return importParsedVersion(message.payload || {});
     case "OJAF_LIST_MODELS":
       return listModels(message.payload || {});
     case "OJAF_TEST_CONNECTION":
@@ -560,6 +585,39 @@ async function setActiveVersion(payload) {
   store.activeId = id;
   await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
   return { versions: summarizeVersions(store) };
+}
+
+// 把 AI 解析结果存为新版本草稿（不激活，待用户在设置页复核保存后再切换）
+async function importParsedVersion(payload) {
+  const profileV2 = normalizeProfileV2(payload?.profileV2);
+  const hasContent =
+    Object.values(profileV2.sections).some(
+      (section) =>
+        Object.keys(section?.values || {}).length > 0 ||
+        (Array.isArray(section?.items) && section.items.length > 0)
+    ) || profileV2.customSections.length > 0;
+  if (!hasContent) {
+    throw new Error("解析结果为空，没有可导入的内容");
+  }
+
+  const store = await getProfileVersions();
+  if (store.versions.length >= MAX_PROFILE_VERSIONS) {
+    throw new Error(`版本数量已达上限（${MAX_PROFILE_VERSIONS} 个）`);
+  }
+
+  const baseName = String(payload?.name || "导入简历").trim().slice(0, 40) || "导入简历";
+  let name = baseName;
+  let suffix = 2;
+  while (store.versions.some((version) => version.name === name)) {
+    name = `${baseName}-${suffix}`;
+    suffix += 1;
+  }
+
+  const now = new Date().toISOString();
+  const version = { id: createVersionId(), name, createdAt: now, updatedAt: now, profileV2 };
+  store.versions.push(version);
+  await chrome.storage.local.set({ [PROFILE_VERSIONS_KEY]: store });
+  return { version: { id: version.id, name: version.name }, versions: summarizeVersions(store) };
 }
 
 async function setupUpdateAlarm() {
@@ -1031,7 +1089,7 @@ async function parseResume(payload) {
     throw new Error("简历内容太短，无法解析。");
   }
 
-  const schema = Array.isArray(payload.schema) ? payload.schema : [];
+  const schema = Array.isArray(payload.schema) && payload.schema.length > 0 ? payload.schema : DEFAULT_RESUME_SCHEMA_HINT;
   const messages = buildResumeParseMessages(resumeText, schema);
   const rawContent = await callAi(apiConfig, messages, { profile: { fields: [] }, scan: { fields: [] } });
   const parsed = parseJsonFromText(rawContent);

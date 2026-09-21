@@ -547,10 +547,15 @@ async function loadSettings() {
     renderVersionBar();
     renderProfileNav();
     renderProfileTips(RESUME_SECTION_GUIDE[0]?.key);
-    await loadVersionIntoEditor(versionsMeta?.activeId || "");
+    const focusVersionId = new URLSearchParams(location.search).get("focusVersion") || "";
+    await loadVersionIntoEditor(focusVersionId || versionsMeta?.activeId || "");
     scheduleProfileSectionSync();
     updateModeBlocks();
-    setStatus("设置已加载。");
+    setStatus(
+      focusVersionId
+        ? "这是由页面解析生成的新版本草稿：请复核内容后点击“保存资料”；保存后可在插件弹窗切换为当前填写版本。"
+        : "设置已加载。"
+    );
     await maybeAutoRefreshModelList({ silent: true });
   } catch (error) {
     setStatus(`加载失败：${error.message}`, true);

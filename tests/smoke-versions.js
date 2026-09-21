@@ -143,6 +143,29 @@ const LEGACY_PROFILE = {
   await assert.rejects(() => send({ type: "OJAF_CREATE_VERSION", payload: { name: "后端开发-杭州" } }), /同名/);
   console.log("PASS 10 同名拒绝");
 
+  // 11. 导入解析草稿：落为新版本、不激活、名称自动去重
+  const draftProfile = {
+    schemaVersion: 2,
+    updatedAt: "",
+    sections: { basic: { key: "basic", title: "基本信息", kind: "simple", values: { "姓名": "王五" }, custom: [] } },
+    customSections: []
+  };
+  const imp1 = await send({ type: "OJAF_IMPORT_PARSED_VERSION", payload: { name: "导入-mokahr.com-09-21", profileV2: draftProfile } });
+  assert.ok(imp1.version.id, "草稿应有 id");
+  assert.strictEqual(store.profileVersions.activeId, subId, "导入草稿不应改变 active 版本");
+  const imp2 = await send({ type: "OJAF_IMPORT_PARSED_VERSION", payload: { name: "导入-mokahr.com-09-21", profileV2: draftProfile } });
+  assert.strictEqual(imp2.version.name, "导入-mokahr.com-09-21-2", "重名应自动加后缀");
+  const s6 = await send({ type: "OJAF_GET_VERSION", payload: { id: imp1.version.id } });
+  assert.strictEqual(s6.version.profileV2.sections.basic.values["姓名"], "王五");
+  console.log("PASS 11 导入草稿：新版本 + 不激活 + 名称去重");
+
+  // 12. 空解析结果拒绝导入
+  await assert.rejects(
+    () => send({ type: "OJAF_IMPORT_PARSED_VERSION", payload: { name: "空的", profileV2: { schemaVersion: 2, sections: {}, customSections: [] } } }),
+    /为空/
+  );
+  console.log("PASS 12 空草稿拒绝");
+
   console.log("ALL PASS: 版本管理断言全部通过");
   process.exit(0);
 })().catch((error) => {
