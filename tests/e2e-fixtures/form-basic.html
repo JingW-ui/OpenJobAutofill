@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>测试夹具：基础网申表单</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 24px auto; }
+    .form-item { margin-bottom: 16px; }
+    .form-item > label { display: block; margin-bottom: 4px; font-weight: 600; }
+    .radio-group label { font-weight: 400; margin-right: 16px; }
+    input, select, textarea { width: 100%; padding: 6px; box-sizing: border-box; }
+    .radio-group input { width: auto; }
+  </style>
+</head>
+<body>
+  <h1>某某公司 2026 校园招聘申请表</h1>
+  <form id="apply-form" onsubmit="return false">
+    <div class="form-item">
+      <label for="f-name">姓名</label>
+      <input id="f-name" name="name" type="text" placeholder="请输入姓名" />
+    </div>
+    <div class="form-item">
+      <label for="f-phone">电话</label>
+      <input id="f-phone" name="phone" type="tel" />
+    </div>
+    <div class="form-item">
+      <label for="f-email">电子邮箱</label>
+      <input id="f-email" name="email" type="email" />
+    </div>
+    <div class="form-item">
+      <label for="f-gender">性别</label>
+      <select id="f-gender" name="gender">
+        <option value="">请选择</option>
+        <option value="male">男</option>
+        <option value="female">女</option>
+      </select>
+    </div>
+    <div class="form-item">
+      <label for="f-birth">出生日期</label>
+      <input id="f-birth" name="birth" type="date" />
+    </div>
+    <div class="form-item">
+      <label for="f-city">现居住城市</label>
+      <input id="f-city" name="city" type="text" value="成都" />
+    </div>
+    <div class="form-item radio-group">
+      <span>是否接受调剂</span>
+      <label><input type="radio" name="adjust" value="是" /> 是</label>
+      <label><input type="radio" name="adjust" value="否" /> 否</label>
+    </div>
+    <div class="form-item">
+      <label for="f-intro">自我评价</label>
+      <textarea id="f-intro" name="intro" rows="4"></textarea>
+    </div>
+    <div class="form-item">
+      <label for="f-attach">简历附件</label>
+      <input id="f-attach" name="attach" type="file" />
+    </div>
+  </form>
+</body>
+</html>
