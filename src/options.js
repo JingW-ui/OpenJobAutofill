@@ -2,6 +2,7 @@ const fields = {
   apiMode: document.getElementById("apiMode"),
   apiKey: document.getElementById("apiKey"),
   model: document.getElementById("model"),
+  parseModel: document.getElementById("parseModel"),
   modelPreset: document.getElementById("modelPreset"),
   modelOptions: document.getElementById("modelOptions"),
   useJsonResponseFormat: document.getElementById("useJsonResponseFormat"),
@@ -51,6 +52,7 @@ const API_CONFIG_FIELD_KEYS = [
   "apiMode",
   "apiKey",
   "model",
+  "parseModel",
   "useJsonResponseFormat",
   "baseUrl",
   "endpointPath",
@@ -732,6 +734,9 @@ function applyApiConfig(config) {
   fields.apiMode.value = config.mode || "openai-compatible";
   fields.apiKey.value = config.apiKey || "";
   fields.model.value = config.model || "";
+  if (fields.parseModel) {
+    fields.parseModel.value = config.parseModel || "";
+  }
   fields.useJsonResponseFormat.checked = Boolean(config.useJsonResponseFormat);
   fields.baseUrl.value = config.baseUrl || "";
   fields.endpointPath.value = config.endpointPath || "";
@@ -755,6 +760,7 @@ function getApiConfigSnapshotFromFields() {
     mode: fields.apiMode.value,
     apiKey: fields.apiKey.value.trim(),
     model: fields.model.value.trim(),
+    parseModel: fields.parseModel ? fields.parseModel.value.trim() : "",
     useJsonResponseFormat: fields.useJsonResponseFormat.checked,
     baseUrl: fields.baseUrl.value.trim(),
     endpointPath: fields.endpointPath.value.trim(),

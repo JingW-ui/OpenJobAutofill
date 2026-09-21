@@ -107,6 +107,7 @@ const RESUME_TEXT = "张三，电话13800001111，2021年9月入学某某大学�
     endpointPath: "/chat/completions",
     apiKey: "test-key",
     model: "test-model",
+    parseModel: "",
     useJsonResponseFormat: false,
     extraHeadersJson: "{}"
   };
@@ -137,7 +138,51 @@ const RESUME_TEXT = "张三，电话13800001111，2021年9月入学某某大学�
     /太短/
   );
 
-  console.log("✅ 全部断言通过：简历解析 prompt 组装 / 归一化 / schema 约束 / 保留 key 防护 / 错误分支 均正常");
+  // 5. parseModel 覆盖逻辑：默认配置应走 auto_deepseek_plan
+  delete store.apiConfig;
+  await send({ type: "OJAF_PARSE_RESUME", payload: { resumeText: RESUME_TEXT, schema: MINI_SCHEMA } });
+  assert.strictEqual(lastFetchBody.model, "auto_deepseek_plan", "默认配置应使用内置解析模型");
+
+  // 6. 显式 parseModel 优先；留空跟随主模型
+  store.apiConfig = { mode: "openai-compatible", baseUrl: "https://api.example.com/v1", endpointPath: "/chat/completions", apiKey: "k", model: "main-model", parseModel: "fast-x", extraHeadersJson: "{}" };
+  await send({ type: "OJAF_PARSE_RESUME", payload: { resumeText: RESUME_TEXT, schema: MINI_SCHEMA } });
+  assert.strictEqual(lastFetchBody.model, "fast-x", "显式 parseModel 应优先");
+  store.apiConfig.parseModel = "";
+  await send({ type: "OJAF_PARSE_RESUME", payload: { resumeText: RESUME_TEXT, schema: MINI_SCHEMA } });
+  assert.strictEqual(lastFetchBody.model, "main-model", "parseModel 留空应跟随主模型");
+
+  // 7. SSE 流式：逐块组装 + onProgress 回调
+  const payloadJson = JSON.stringify({ sections: { basic: { values: { "姓名": "王二" } } } });
+  const partLen = Math.ceil(payloadJson.length / 4);
+  const sseChunks = [];
+  for (let i = 0; i < payloadJson.length; i += partLen) {
+    const part = payloadJson.slice(i, i + partLen);
+    sseChunks.push(`data: ${JSON.stringify({ choices: [{ delta: { content: part } }] })}\n\n`);
+  }
+  sseChunks.push("data: [DONE]\n\n");
+  const progressEvents = [];
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: (h) => (String(h).toLowerCase() === "content-type" ? "text/event-stream" : null) },
+    body: new ReadableStream({
+      start(controller) {
+        for (const chunk of sseChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      }
+    })
+  });
+  const r7 = await send({
+    type: "OJAF_PARSE_RESUME",
+    payload: { resumeText: RESUME_TEXT, schema: MINI_SCHEMA, onProgress: (chars) => progressEvents.push(chars) }
+  });
+  assert.strictEqual(r7.profileV2.sections.basic.values["姓名"], "王二", "SSE 流式组装后应正确解析");
+  assert.ok(progressEvents.length >= 2, "流式应有多次进度回调");
+  assert.ok(progressEvents.every((v, i, a) => i === 0 || v > a[i - 1]), "进度应递增");
+
+  console.log("✅ 全部断言通过：prompt 组装 / 归一化 / schema 约束 / 保留 key 防护 / 错误分支 / parseModel 覆盖 / SSE 流式 均正常");
   process.exit(0);
 })().catch((error) => {
   console.error("❌ 冒烟测试失败:", error);

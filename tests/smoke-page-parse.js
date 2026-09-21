@@ -138,6 +138,19 @@ const NOT_RESUME_TEXT = "今天天气不错，适合出门散步。推荐几款�
   assert.strictEqual(store.pageParseState.status, "idle");
   console.log("PASS 4 状态复位");
 
+  // 场景 5：僵尸 running 自愈（SW 被回收后心跳超时 → 转为可重试错误态）
+  store.pageParseState = {
+    status: "running",
+    stage: "ai",
+    startedAt: Date.now() - 10 * 60 * 1000,
+    heartbeatAt: Date.now() - 10 * 60 * 1000,
+    text: RESUME_TEXT
+  };
+  const state5 = await send({ type: "OJAF_GET_PAGE_PARSE_STATE" });
+  assert.strictEqual(state5.status, "error", "心跳超时的 running 应自愈为 error");
+  assert.ok(state5.text.length >= 100, "自愈后应保留文本供重试");
+  console.log("PASS 5 僵尸任务自愈");
+
   console.log("ALL PASS: 页面解析编排断言全部通过");
   process.exit(0);
 })().catch((error) => {

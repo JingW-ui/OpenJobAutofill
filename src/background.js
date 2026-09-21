@@ -4,6 +4,7 @@ const DEFAULT_API_CONFIG = {
   endpointPath: "/chat/completions",
   apiKey: "codemaker-managed",
   model: "glm-5.3-flash",
+  parseModel: "auto_deepseek_plan",
   useJsonResponseFormat: false,
   extraHeadersJson: "{}",
   customUrl: "",
@@ -632,10 +633,27 @@ async function importParsedVersion(payload) {
 
 let pageParseInFlight = false;
 
+const PAGE_PARSE_HEARTBEAT_DEAD_MS = 90000;
+
 async function getPageParseState() {
   const values = await chrome.storage.local.get([PAGE_PARSE_STATE_KEY]);
-  const state = values[PAGE_PARSE_STATE_KEY];
-  return state && typeof state === "object" ? state : { status: "idle" };
+  let state = values[PAGE_PARSE_STATE_KEY];
+  if (!state || typeof state !== "object") {
+    return { status: "idle" };
+  }
+  // 僵尸任务自愈：running 但心跳超时（SW 被回收）→ 转为可重试的错误态
+  if (state.status === "running" && !pageParseInFlight) {
+    const lastBeat = Number(state.heartbeatAt || state.startedAt || 0);
+    if (Date.now() - lastBeat > PAGE_PARSE_HEARTBEAT_DEAD_MS) {
+      state = {
+        ...state,
+        status: "error",
+        error: "解析任务被浏览器后台回收中断。点重试可复用已抽取的页面文本，不重复读取页面。"
+      };
+      await chrome.storage.local.set({ [PAGE_PARSE_STATE_KEY]: state });
+    }
+  }
+  return state;
 }
 
 async function setPageParseState(patch) {
@@ -699,6 +717,10 @@ async function startPageParse(payload) {
   const startedAt = Date.now();
   let text = "";
   let pageInfo = null;
+  // SW 保活心跳：解析期间每 15s 写一次存储，既是活动信号，也作为僵尸任务判定依据
+  const heartbeat = setInterval(() => {
+    void setPageParseState({ heartbeatAt: Date.now() }).catch(() => undefined);
+  }, 15000);
 
   try {
     // 1. 抽取页面文本（重试时复用缓存文本）
@@ -752,7 +774,25 @@ async function startPageParse(payload) {
       percent: 22,
       detail: `正在结构化 ${text.length} 字符的页面内容，通常需要十几秒`
     });
-    const parsed = await parseResume({ resumeText: text });
+    // 流式进度节流上报：storage 状态 + 页面浮动面板
+    let lastProgressPush = 0;
+    const parsed = await parseResume({
+      resumeText: text,
+      onProgress: (chars) => {
+        const now = Date.now();
+        if (now - lastProgressPush < 800) {
+          return;
+        }
+        lastProgressPush = now;
+        void setPageParseState({ progressChars: chars }).catch(() => undefined);
+        void notifyTabPageParse(tabId, {
+          type: "OJAF_PAGE_PARSE_PROGRESS",
+          stageLabel: "AI 解析页面简历",
+          percent: 22,
+          detail: `正在结构化页面内容，已生成 ${chars} 字符`
+        });
+      }
+    });
 
     // 4. 存为新版本草稿并打开设置页复核
     await notifyTabPageParse(tabId, { type: "OJAF_PAGE_PARSE_PROGRESS", stageLabel: "保存草稿", percent: 94, detail: "正在生成新版本草稿" });
@@ -791,6 +831,7 @@ async function startPageParse(payload) {
     await notifyTabPageParse(tabId, { type: "OJAF_PAGE_PARSE_DONE", ok: false, message: `解析失败：${error.message}` });
     throw error;
   } finally {
+    clearInterval(heartbeat);
     pageParseInFlight = false;
   }
 }
@@ -1251,7 +1292,12 @@ function isPlainObject(value) {
 
 async function parseResume(payload) {
   const settings = await getSettings();
-  const apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
+  let apiConfig = { ...settings.apiConfig, ...(payload.apiConfig || {}) };
+  // 解析模型可选覆盖：留空跟随主模型；内网默认 auto_deepseek_plan（快 3 倍）
+  const parseModel = String(apiConfig.parseModel || "").trim();
+  if (parseModel) {
+    apiConfig = { ...apiConfig, model: parseModel };
+  }
   if (!String(apiConfig.apiKey || "").trim()) {
     throw new Error("简历解析需要 AI：请先在 API 设置中填写 API Key。");
   }
@@ -1266,7 +1312,13 @@ async function parseResume(payload) {
 
   const schema = Array.isArray(payload.schema) && payload.schema.length > 0 ? payload.schema : DEFAULT_RESUME_SCHEMA_HINT;
   const messages = buildResumeParseMessages(resumeText, schema);
-  const rawContent = await callAi(apiConfig, messages, { profile: { fields: [] }, scan: { fields: [] } });
+  const onProgress = typeof payload.onProgress === "function" ? payload.onProgress : null;
+  const rawContent = await callAi(
+    apiConfig,
+    messages,
+    { profile: { fields: [] }, scan: { fields: [] } },
+    { stream: true, onProgress }
+  );
   const parsed = parseJsonFromText(rawContent);
   const profileV2 = normalizeParsedResume(parsed, schema);
 
@@ -1647,14 +1699,14 @@ function buildPageStructureMessages(scan) {
   ];
 }
 
-async function callAi(apiConfig, messages, context) {
+async function callAi(apiConfig, messages, context, options = {}) {
   if (apiConfig.mode === "custom") {
     return callCustomApi(apiConfig, messages, context);
   }
-  return callOpenAiCompatible(apiConfig, messages);
+  return callOpenAiCompatible(apiConfig, messages, options);
 }
 
-async function callOpenAiCompatible(apiConfig, messages) {
+async function callOpenAiCompatible(apiConfig, messages, options = {}) {
   if (!apiConfig.baseUrl) {
     throw new Error("API base URL is required.");
   }
@@ -1675,11 +1727,22 @@ async function callOpenAiCompatible(apiConfig, messages) {
     body.response_format = { type: "json_object" };
   }
 
+  const wantStream = Boolean(options.stream);
+  if (wantStream) {
+    body.stream = true;
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers,
     body: JSON.stringify(body)
   });
+
+  // 流式分支：服务端支持 SSE 时逐块读取，实时上报已生成字符数（顺带让 SW 保持活动）
+  const contentType = String(response.headers?.get?.("content-type") || "");
+  if (wantStream && response.ok && response.body && contentType.includes("text/event-stream")) {
+    return readOpenAiStream(response, options);
+  }
 
   const text = await response.text();
   if (!response.ok) {
@@ -1700,6 +1763,70 @@ async function callOpenAiCompatible(apiConfig, messages) {
   }
 
   return JSON.stringify(data);
+}
+
+const STREAM_IDLE_TIMEOUT_MS = 45000;
+
+// 逐块读取 OpenAI 兼容 SSE 流；45s 无新数据判定超时（防代理挂起）
+async function readOpenAiStream(response, options = {}) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let finished = false;
+
+  try {
+    while (!finished) {
+      const { done, value } = await Promise.race([
+        reader.read(),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("AI 响应超时：45 秒没有新数据")), STREAM_IDLE_TIMEOUT_MS);
+        })
+      ]);
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const rawEvent = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        for (const line of rawEvent.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) {
+            continue;
+          }
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") {
+            finished = true;
+            break;
+          }
+          try {
+            const json = JSON.parse(data);
+            const delta = json?.choices?.[0]?.delta?.content;
+            if (typeof delta === "string" && delta) {
+              content += delta;
+              options.onProgress?.(content.length);
+            }
+          } catch {
+            // 忽略半截 JSON 行
+          }
+        }
+      }
+    }
+  } finally {
+    try {
+      reader.cancel();
+    } catch {
+      // 忽略
+    }
+  }
+
+  if (!content.trim()) {
+    throw new Error("AI 流式响应为空");
+  }
+  return content;
 }
 
 async function callCustomApi(apiConfig, messages, context) {

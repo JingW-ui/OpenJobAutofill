@@ -140,6 +140,12 @@
           </label>
 
           <label>
+            解析模型（可选，仅用于简历解析）
+            <input id="parseModel" type="text" placeholder="留空则与模型名一致" />
+            <span class="field-help">简历结构化不需要深度推理，建议用快模型：内网默认 auto_deepseek_plan（约 40 秒）；glm-5.3-flash 更准但约 2 分钟。使用其他 API 时请留空或填该平台存在的模型名。</span>
+          </label>
+
+          <label>
             模型候选（刷新后可选）
             <select id="modelPreset">
               <option value="">手动输入 / 不使用候选</option>

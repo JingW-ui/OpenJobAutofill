@@ -129,7 +129,9 @@ function renderPageParseState(state) {
     button.textContent = "解析中…";
     const elapsed = Math.max(0, Math.floor((Date.now() - Number(state.startedAt || Date.now())) / 1000));
     const stage = PAGE_PARSE_STAGE_LABELS[state.stage] || "处理中";
-    setStatus(`正在解析当前页简历：${stage}（已等待 ${elapsed} 秒）。关闭本弹窗不影响解析，页面右下角有实时进度。`);
+    const generated = Number(state.progressChars || 0);
+    const generatedText = generated > 0 ? `，已生成 ${generated} 字符` : "";
+    setStatus(`正在解析当前页简历：${stage}${generatedText}（已等待 ${elapsed} 秒）。关闭本弹窗不影响解析，页面右下角有实时进度。`);
     return;
   }
 
