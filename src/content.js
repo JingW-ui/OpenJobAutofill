@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.8.7-ai-first-cn";
+  const SCRIPT_VERSION = "0.8.8-flat-form-fixes";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -1705,11 +1705,19 @@
     }
 
     try {
-      const labels = Array.from(container.querySelectorAll(labelSelector))
-        .slice(0, 4)
-        .map((label) => getElementText(label))
-        .filter(Boolean);
-      return normalizeText(labels.join(" | "), 160);
+      // 嵌套命中去重：label 常同时命中外层容器与内层 label 元素（如 .ant-form-item-label 包住 label），
+      // 不去重会得到 "性别 | 性别"，破坏精确匹配与类别推断
+      const texts = [];
+      for (const label of Array.from(container.querySelectorAll(labelSelector)).slice(0, 8)) {
+        const text = normalizeFieldLabelText(getElementText(label));
+        if (text && !texts.includes(text)) {
+          texts.push(text);
+        }
+        if (texts.length >= 4) {
+          break;
+        }
+      }
+      return normalizeText(texts.join(" | "), 160);
     } catch {
       return "";
     }
@@ -3347,6 +3355,17 @@
       return "家庭信息";
     }
 
+    // 先用字段自身标签精确分类：扁平表单里 groupText 常包含全表单所有字段名，
+    // 若先用组合文本做模糊匹配，"自我评价"等字段名会把同组所有字段误判成同一类别
+    const ownLabel = normalizeMatchKey(field?.label || "");
+    if (
+      /^(姓名|性别|出生日期|民族|政治面貌|籍贯|户口所在地|现户口所在地|当前居住地|当前居住地详细地址|身高|体重|血型|婚姻状况|电子邮箱|手机号码|电话|微信号|QQ|最高学历|最高全日制学历)$/.test(
+        ownLabel
+      )
+    ) {
+      return "基本信息";
+    }
+
     const text = compactText([field?.groupText, getFieldOptionLabelsText(field, 180), field?.section, field?.nearbyText, field?.label].join(" "));
     if (!text) {
       return "";
@@ -3599,6 +3618,12 @@
     const cityLike = /市|城市|地区/.test(labelKey);
     const addressLike = /地址|住址|详细地址|街道|门牌|通讯|通信|邮寄|收件/.test(labelKey);
 
+    // 防组内文本株连：字段自身标签与地址类无关时不判桶（否则扁平表单里一个"现居住城市"
+    // 会让同组所有字段被判成地址桶，与 name/phone 等资料桶不兼容而全部填不出）
+    if (!/籍贯|生源|户口|户籍|居住|居地|地址|住址|省|市|城市|地区|街道|门牌|通讯|通信|邮寄|收件/.test(labelKey)) {
+      return "";
+    }
+
     if (/籍贯/.test(key)) {
       if (provinceLike || /籍贯省/.test(key)) {
         return "nativeProvince";
@@ -3744,6 +3769,21 @@
   }
 
   function getSemanticBucket(text, category = "") {
+    // 锚定判断必须用字段自身文本：category 前缀会让 /^姓名$/ 这类精确匹配永远失配
+    const ownKey = normalizeMatchKey(text);
+    if (/^姓名$/.test(ownKey)) {
+      return "fullName";
+    }
+    if (/^姓$/.test(ownKey)) {
+      return "lastName";
+    }
+    if (/^名$/.test(ownKey)) {
+      return "firstName";
+    }
+    if (/^电话$/.test(ownKey)) {
+      return "phone";
+    }
+
     const key = normalizeMatchKey([category, text].join(" "));
     if (!key) {
       return "";
@@ -4751,7 +4791,9 @@
       score += 1;
     }
 
-    if (/上传|附件|照片|证件照|简历附件/.test(fieldText)) {
+    // 上传类否决只看字段自身标签：fieldText 含 groupText，扁平表单里"简历附件"会株连所有字段
+    const fieldOwnText = compactText([fieldLabel, field?.label, field?.placeholder, field?.name, field?.id].join(" "));
+    if (/上传|附件|照片|证件照|简历附件/.test(fieldOwnText)) {
       score = -999;
     }
 
@@ -4759,7 +4801,9 @@
       score += 6;
     }
 
-    if (/出生日期|出生年月|开始时间|结束时间|取得毕业证时间|获取日期|竞赛时间/.test(fieldText) && /日期|时间|年月/.test(entry.label)) {
+    // 日期加成只看字段自身标签：fieldText 含卡片/组文本，同卡片的"开始时间"会让日期类资料株连加分
+    const dateLabelText = compactText([fieldLabel, field?.label].join(" "));
+    if (/出生日期|出生年月|开始时间|结束时间|取得毕业证时间|获取日期|竞赛时间/.test(dateLabelText) && /日期|时间|年月/.test(entry.label)) {
       score += 5;
     }
 
@@ -5945,17 +5989,19 @@
       return { ok: false, reason: "not hierarchical" };
     }
 
+    // 逐级点选：已点过的层级不再重复匹配（否则本级文本是完整目标的前缀，会把父级再点一遍）
+    const clicked = new Set();
     let matchedAny = false;
     for (const part of parts) {
-      const options = findVisibleChoiceOptions(document);
-      const matched = options.find((option) => {
-        const text = getElementText(option);
-        return choiceTextMatches(text, part) || choiceTextMatches(text, target);
-      });
+      const options = findVisibleChoiceOptions(document).filter((option) => !clicked.has(option));
+      const matched =
+        options.find((option) => choiceTextMatches(getElementText(option), part)) ||
+        options.find((option) => choiceTextMatches(getElementText(option), target));
       if (!matched) {
         return matchedAny ? { ok: true, warning: "hierarchical choice partially matched" } : { ok: false, reason: "no matching hierarchical option" };
       }
 
+      clicked.add(matched);
       clickActionElement(matched);
       matchedAny = true;
       await sleep(180);
