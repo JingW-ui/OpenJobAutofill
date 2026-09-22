@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>测试夹具：ant-design 自定义控件表单</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 24px auto; }
+    .ant-form-item { margin-bottom: 16px; display: flex; align-items: center; gap: 12px; }
+    .ant-form-item-label { width: 130px; text-align: right; font-weight: 600; }
+    .ant-select { flex: 1; border: 1px solid #d9d9d9; border-radius: 6px; padding: 5px 11px; cursor: pointer; background: #fff; min-height: 22px; }
+    .ant-select-selection-placeholder { color: #bfbfbf; }
+    .ant-select-selection-item { color: #202124; }
+    .ant-select-dropdown, .ant-cascader-menus-wrap { position: fixed; left: 40px; top: 40px; z-index: 9999; background: #fff; border: 1px solid #eee; border-radius: 8px; box-shadow: 0 6px 16px rgba(0,0,0,0.12); padding: 4px; }
+    .ant-select-item-option, .ant-cascader-menu-item { padding: 6px 12px; cursor: pointer; border-radius: 4px; }
+    .ant-select-item-option:hover, .ant-cascader-menu-item:hover { background: #f5f5f5; }
+    .ant-cascader-menus { display: flex; gap: 4px; }
+    .ant-cascader-menu { min-width: 110px; border-right: 1px solid #f0f0f0; }
+    .ant-cascader-menu:last-child { border-right: 0; }
+  </style>
+</head>
+<body>
+  <h1>某科技公司 社会招聘申请表</h1>
+  <form id="apply-form" onsubmit="return false">
+    <div class="ant-form-item">
+      <div class="ant-form-item-label"><label for="f-name">姓名</label></div>
+      <input id="f-name" name="name" type="text" style="flex:1" />
+    </div>
+
+    <!-- ant-select 单选：性别 -->
+    <div class="ant-form-item">
+      <div class="ant-form-item-label"><label>性别</label></div>
+      <div class="ant-select" id="gender-select" data-field-kind="select">
+        <div class="ant-select-selector">
+          <span class="ant-select-selection-search"><input role="combobox" aria-expanded="false" readonly /></span>
+          <span class="ant-select-selection-placeholder">请选择</span>
+          <span class="ant-select-selection-item" hidden></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ant-cascader 级联：期望工作城市（省→市） -->
+    <div class="ant-form-item">
+      <div class="ant-form-item-label"><label>期望工作城市</label></div>
+      <div class="ant-select ant-cascader" id="city-cascader" data-field-kind="cascader">
+        <div class="ant-select-selector">
+          <span class="ant-select-selection-search"><input role="combobox" aria-expanded="false" readonly /></span>
+          <span class="ant-select-selection-placeholder">请选择</span>
+          <span class="ant-select-selection-item" hidden></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ant-select 搜索懒加载：意向岗位（选项需输入关键词才出现） -->
+    <div class="ant-form-item">
+      <div class="ant-form-item-label"><label>意向岗位</label></div>
+      <div class="ant-select" id="job-select" data-field-kind="search-select">
+        <div class="ant-select-selector">
+          <span class="ant-select-selection-search"><input role="combobox" aria-expanded="false" /></span>
+          <span class="ant-select-selection-placeholder">请输入关键词搜索岗位</span>
+          <span class="ant-select-selection-item" hidden></span>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  <script>
+    const JOBS = ["测试开发工程师", "前端开发工程师", "后端开发工程师", "算法工程师", "产品经理"];
+    const CITIES = { "浙江省": ["杭州市", "宁波市", "温州市"], "四川省": ["成都市", "绵阳市"], "北京市": ["朝阳区", "海淀区"] };
+
+    function closeAllDropdowns() {
+      document.querySelectorAll(".ant-select-dropdown, .ant-cascader-menus-wrap").forEach((el) => el.remove());
+      document.querySelectorAll('[role="combobox"]').forEach((el) => el.setAttribute("aria-expanded", "false"));
+    }
+
+    function setSelected(root, text) {
+      const item = root.querySelector(".ant-select-selection-item");
+      const ph = root.querySelector(".ant-select-selection-placeholder");
+      item.hidden = false;
+      item.textContent = text;
+      if (ph) ph.hidden = true;
+      root.dataset.selected = text;
+    }
+
+    // 性别：普通单选下拉
+    document.getElementById("gender-select").addEventListener("click", function () {
+      closeAllDropdowns();
+      const dd = document.createElement("div");
+      dd.className = "ant-select-dropdown";
+      dd.innerHTML = ["男", "女"].map((t) =>
+        `<div class="ant-select-item ant-select-item-option" role="option" aria-label="${t}"><div class="ant-select-item-option-content">${t}</div></div>`
+      ).join("");
+      dd.addEventListener("click", (e) => {
+        const opt = e.target.closest(".ant-select-item-option");
+        if (!opt) return;
+        setSelected(this, opt.innerText.trim());
+        closeAllDropdowns();
+      });
+      document.body.appendChild(dd);
+      this.querySelector('[role="combobox"]').setAttribute("aria-expanded", "true");
+    });
+
+    // 城市：级联（省 → 市）
+    document.getElementById("city-cascader").addEventListener("click", function () {
+      closeAllDropdowns();
+      const wrap = document.createElement("div");
+      wrap.className = "ant-cascader-menus-wrap";
+      wrap.innerHTML = `<div class="ant-cascader-menus"><div class="ant-cascader-menu" data-level="1"></div></div>`;
+      const menu = wrap.querySelector('[data-level="1"]');
+      menu.innerHTML = Object.keys(CITIES).map((p) =>
+        `<div class="ant-cascader-menu-item" data-province="${p}"><div class="ant-cascader-menu-item-content">${p}</div></div>`
+      ).join("");
+      document.body.appendChild(wrap);
+      this.querySelector('[role="combobox"]').setAttribute("aria-expanded", "true");
+
+      const self = this;
+      wrap.addEventListener("click", (e) => {
+        const item = e.target.closest(".ant-cascader-menu-item");
+        if (!item) return;
+        const province = item.dataset.province;
+        const city = item.dataset.city;
+        if (province) {
+          const menus = wrap.querySelector(".ant-cascader-menus");
+          menus.querySelector('[data-level="2"]')?.remove();
+          const level2 = document.createElement("div");
+          level2.className = "ant-cascader-menu";
+          level2.dataset.level = "2";
+          level2.innerHTML = CITIES[province].map((c) =>
+            `<div class="ant-cascader-menu-item" data-city="${c}" data-parent="${province}"><div class="ant-cascader-menu-item-content">${c}</div></div>`
+          ).join("");
+          menus.appendChild(level2);
+          return;
+        }
+        if (city) {
+          setSelected(self, `${item.dataset.parent} / ${city}`);
+          closeAllDropdowns();
+        }
+      });
+    });
+
+    // 意向岗位：搜索懒加载（不输入关键词时无可选项）
+    document.getElementById("job-select").addEventListener("click", function () {
+      closeAllDropdowns();
+      const dd = document.createElement("div");
+      dd.className = "ant-select-dropdown";
+      dd.id = "job-dropdown";
+      dd.innerHTML = `<div class="ant-select-item ant-select-item-option" style="color:#bfbfbf">请输入关键词搜索</div>`;
+      document.body.appendChild(dd);
+      this.querySelector('[role="combobox"]').setAttribute("aria-expanded", "true");
+    });
+    document.getElementById("job-select").querySelector("input").addEventListener("input", function () {
+      const dd = document.getElementById("job-dropdown");
+      if (!dd) return;
+      const kw = this.value.trim();
+      const hits = JOBS.filter((j) => j.includes(kw));
+      dd.innerHTML = hits.length
+        ? hits.map((t) => `<div class="ant-select-item ant-select-item-option" role="option" aria-label="${t}"><div class="ant-select-item-option-content">${t}</div></div>`).join("")
+        : `<div class="ant-select-item ant-select-item-option" style="color:#bfbfbf">无匹配岗位</div>`;
+    });
+    document.addEventListener("click", (e) => {
+      const opt = e.target.closest("#job-dropdown .ant-select-item-option");
+      if (opt && opt.getAttribute("role") === "option") {
+        setSelected(document.getElementById("job-select"), opt.innerText.trim());
+        closeAllDropdowns();
+      }
+    });
+  </script>
+</body>
+</html>

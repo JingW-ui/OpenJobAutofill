@@ -42,6 +42,18 @@ const PROFILE_V2 = {
       kind: "simple",
       values: { "自我评价": "认真负责，熟悉自动化测试。" },
       custom: []
+    },
+    intention: {
+      key: "intention",
+      title: "求职意向",
+      kind: "repeat",
+      items: [
+        {
+          title: "求职意向 1",
+          values: { "意向岗位": "测试开发工程师", "期望工作城市": "浙江省杭州市" },
+          custom: []
+        }
+      ]
     }
   },
   customSections: []
@@ -251,6 +263,31 @@ async function startAutofillOnTab(sw, tabId) {
     } else {
       console.log("WARN 阶段二：城市未被覆盖（本地规则分数未达覆盖阈值），覆盖路径未触发——行为仍安全");
     }
+
+    // ---- 阶段三：ant-design 自定义控件（下拉/级联/搜索懒加载） ----
+    await sw.evaluate(async () => {
+      await chrome.storage.local.set({ fillConfig: { onlyBlank: true } });
+    });
+    await page.goto(`http://127.0.0.1:${port}/form-antd.html`, { waitUntil: "domcontentloaded" });
+    const result3 = await startAutofillOnTab(sw, await getTabId(sw, page));
+    console.log("阶段三填写结果:", JSON.stringify(result3?.data || result3).slice(0, 200));
+    const floatText3 = await page.evaluate(() => document.getElementById("ojaf-floating-status")?.innerText || "(无浮动面板)");
+    console.log("--- 阶段三浮动面板 ---");
+    console.log(floatText3.replace(/\n+/g, " | ").slice(0, 400));
+    await page.waitForTimeout(600);
+
+    const antd = await page.evaluate(() => ({
+      name: document.getElementById("f-name").value,
+      gender: document.querySelector("#gender-select")?.dataset.selected || "",
+      city: document.querySelector("#city-cascader")?.dataset.selected || "",
+      job: document.querySelector("#job-select")?.dataset.selected || ""
+    }));
+    console.log("antd 控件状态:", JSON.stringify(antd));
+    assert.strictEqual(antd.name, "张三", "姓名应填入");
+    assert.strictEqual(antd.gender, "男", "ant-select 下拉应选中男");
+    assert.ok(antd.city.includes("杭州市"), `级联应选到杭州市，实际：${antd.city}`);
+    assert.strictEqual(antd.job, "测试开发工程师", "搜索懒加载下拉应选中意向岗位");
+    console.log("PASS 阶段三：ant-design 下拉/级联/搜索懒加载全部断言通过");
 
     console.log("ALL PASS: 夹具 E2E 完成");
   } finally {

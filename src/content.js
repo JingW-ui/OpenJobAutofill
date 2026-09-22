@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.9.5-fixtures";
+  const SCRIPT_VERSION = "0.9.6-antd-controls";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -1720,11 +1720,19 @@
     }
 
     try {
-      const labels = Array.from(container.querySelectorAll(labelSelector))
-        .slice(0, 4)
-        .map((label) => getElementText(label))
-        .filter(Boolean);
-      return normalizeText(labels.join(" | "), 160);
+      // 嵌套命中去重：label 常同时命中外层容器与内层 label 元素（如 .ant-form-item-label 包住 label），
+      // 不去重会得到 "性别 | 性别"，破坏精确匹配与类别推断
+      const texts = [];
+      for (const label of Array.from(container.querySelectorAll(labelSelector)).slice(0, 8)) {
+        const text = normalizeFieldLabelText(getElementText(label));
+        if (text && !texts.includes(text)) {
+          texts.push(text);
+        }
+        if (texts.length >= 4) {
+          break;
+        }
+      }
+      return normalizeText(texts.join(" | "), 160);
     } catch {
       return "";
     }
@@ -6335,17 +6343,19 @@
       return { ok: false, reason: "not hierarchical" };
     }
 
+    // 逐级点选：已点过的层级不再重复匹配（否则本级文本是完整目标的前缀，会把父级再点一遍）
+    const clicked = new Set();
     let matchedAny = false;
     for (const part of parts) {
-      const options = findVisibleChoiceOptions(document);
-      const matched = options.find((option) => {
-        const text = getElementText(option);
-        return choiceTextMatches(text, part) || choiceTextMatches(text, target);
-      });
+      const options = findVisibleChoiceOptions(document).filter((option) => !clicked.has(option));
+      const matched =
+        options.find((option) => choiceTextMatches(getElementText(option), part)) ||
+        options.find((option) => choiceTextMatches(getElementText(option), target));
       if (!matched) {
         return matchedAny ? { ok: true, warning: "hierarchical choice partially matched" } : { ok: false, reason: "no matching hierarchical option" };
       }
 
+      clicked.add(matched);
       clickActionElement(matched);
       matchedAny = true;
       await sleep(180);
