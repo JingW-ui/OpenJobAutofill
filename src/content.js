@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_VERSION = "0.9.6-antd-controls";
+  const SCRIPT_VERSION = "0.9.7-repeat-eui";
 
   if (window.__OJAF_AUTOFILL_VERSION__ === SCRIPT_VERSION) {
     return;
@@ -3587,7 +3587,7 @@
     // 若先用组合文本做模糊匹配，"自我评价"等字段名会把同组所有字段误判成同一类别
     const ownLabel = normalizeMatchKey(field?.label || "");
     if (
-      /^(姓名|性别|出生日期|民族|政治面貌|籍贯|户口所在地|现户口所在地|当前居住地|当前居住地详细地址|身高|体重|血型|婚姻状况|电子邮箱|手机号码|电话|微信号|QQ)$/.test(
+      /^(姓名|性别|出生日期|民族|政治面貌|籍贯|户口所在地|现户口所在地|当前居住地|当前居住地详细地址|身高|体重|血型|婚姻状况|电子邮箱|手机号码|电话|微信号|QQ|最高学历|最高全日制学历)$/.test(
         ownLabel
       )
     ) {
@@ -5029,7 +5029,9 @@
       score += 6;
     }
 
-    if (/出生日期|出生年月|开始时间|结束时间|取得毕业证时间|获取日期|竞赛时间/.test(fieldText) && /日期|时间|年月/.test(entry.label)) {
+    // 日期加成只看字段自身标签：fieldText 含卡片/组文本，同卡片的"开始时间"会让日期类资料株连加分
+    const dateLabelText = compactText([fieldLabel, field?.label].join(" "));
+    if (/出生日期|出生年月|开始时间|结束时间|取得毕业证时间|获取日期|竞赛时间/.test(dateLabelText) && /日期|时间|年月/.test(entry.label)) {
       score += 5;
     }
 

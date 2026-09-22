@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>测试夹具：重复块经历表单</title>
+  <style>
+    body { font-family: sans-serif; max-width: 680px; margin: 24px auto; }
+    fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 16px; padding: 14px; }
+    legend { font-weight: 700; }
+    .row { margin-bottom: 10px; }
+    .row label { display: inline-block; width: 90px; }
+  </style>
+</head>
+<body>
+  <h1>重复块经历夹具</h1>
+  <form onsubmit="return false">
+    <div class="form-item">
+      <label for="f-name">姓名</label>
+      <input id="f-name" name="name" type="text" />
+    </div>
+
+    <fieldset>
+      <legend>教育经历（按时间倒序填写）</legend>
+      <div class="edu-card" data-index="1">
+        <h3>教育经历 1</h3>
+        <div class="row"><label>学校</label><input name="school1" type="text" /></div>
+        <div class="row"><label>专业</label><input name="major1" type="text" /></div>
+        <div class="row"><label>开始时间</label><input name="start1" type="month" /></div>
+        <div class="row"><label>结束时间</label><input name="end1" type="month" /></div>
+      </div>
+      <div class="edu-card" data-index="2">
+        <h3>教育经历 2</h3>
+        <div class="row"><label>学校</label><input name="school2" type="text" /></div>
+        <div class="row"><label>专业</label><input name="major2" type="text" /></div>
+        <div class="row"><label>开始时间</label><input name="start2" type="month" /></div>
+        <div class="row"><label>结束时间</label><input name="end2" type="month" /></div>
+      </div>
+    </fieldset>
+  </form>
+</body>
+</html>

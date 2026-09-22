@@ -32,7 +32,8 @@ const PROFILE_V2 = {
         "邮箱": "zhangsan@test.com",
         "性别": "男",
         "出生日期": "1999-05-12",
-        "现居住城市": "杭州"
+        "现居住城市": "杭州",
+        "最高学历": "硕士"
       },
       custom: []
     },
@@ -51,6 +52,23 @@ const PROFILE_V2 = {
         {
           title: "求职意向 1",
           values: { "意向岗位": "测试开发工程师", "期望工作城市": "浙江省杭州市" },
+          custom: []
+        }
+      ]
+    },
+    education: {
+      key: "education",
+      title: "教育经历",
+      kind: "repeat",
+      items: [
+        {
+          title: "教育经历 1",
+          values: { "学校": "浙江大学", "专业": "计算机科学与技术", "开始时间": "2024-09", "结束时间": "2027-06" },
+          custom: []
+        },
+        {
+          title: "教育经历 2",
+          values: { "学校": "西南科技大学", "专业": "生物医学工程", "开始时间": "2020-09", "结束时间": "2024-06" },
           custom: []
         }
       ]
@@ -288,6 +306,60 @@ async function startAutofillOnTab(sw, tabId) {
     assert.ok(antd.city.includes("杭州市"), `级联应选到杭州市，实际：${antd.city}`);
     assert.strictEqual(antd.job, "测试开发工程师", "搜索懒加载下拉应选中意向岗位");
     console.log("PASS 阶段三：ant-design 下拉/级联/搜索懒加载全部断言通过");
+
+    // ---- 阶段四：重复块经历（两段教育卡片） ----
+    await page.goto(`http://127.0.0.1:${port}/form-repeat.html`, { waitUntil: "domcontentloaded" });
+    await startAutofillOnTab(sw, await getTabId(sw, page));
+    const rep = await page.evaluate(() => ({
+      school1: document.querySelector('[name="school1"]').value,
+      major1: document.querySelector('[name="major1"]').value,
+      start1: document.querySelector('[name="start1"]').value,
+      school2: document.querySelector('[name="school2"]').value,
+      major2: document.querySelector('[name="major2"]').value,
+      end2: document.querySelector('[name="end2"]').value
+    }));
+    console.log("重复块状态:", JSON.stringify(rep));
+    assert.strictEqual(rep.school1, "浙江大学", "卡片 1 应是教育经历 1（浙大）");
+    assert.strictEqual(rep.major1, "计算机科学与技术");
+    assert.strictEqual(rep.start1, "2024-09");
+    assert.strictEqual(rep.school2, "西南科技大学", "卡片 2 应是教育经历 2（西南科大）");
+    assert.strictEqual(rep.major2, "生物医学工程");
+    assert.strictEqual(rep.end2, "2024-06");
+    console.log("PASS 阶段四：重复块经历按序填充");
+
+    // ---- 阶段五：element-ui 下拉 ----
+    await page.goto(`http://127.0.0.1:${port}/form-element-ui.html`, { waitUntil: "domcontentloaded" });
+    await startAutofillOnTab(sw, await getTabId(sw, page));
+    await page.waitForTimeout(400);
+    const elui = await page.evaluate(() => ({
+      name: document.getElementById("f-name").value,
+      gender: document.querySelector("#gender-select")?.dataset.selected || "",
+      edu: document.querySelector("#edu-select")?.dataset.selected || ""
+    }));
+    console.log("element-ui 状态:", JSON.stringify(elui));
+    assert.strictEqual(elui.name, "张三");
+    assert.strictEqual(elui.gender, "男", "el-select 性别");
+    assert.strictEqual(elui.edu, "硕士", "el-select 最高学历");
+    console.log("PASS 阶段五：element-ui 下拉断言通过");
+
+    // ---- 阶段六：多步骤表单（DOM 变更后重跑） ----
+    await page.goto(`http://127.0.0.1:${port}/form-steps.html`, { waitUntil: "domcontentloaded" });
+    await startAutofillOnTab(sw, await getTabId(sw, page));
+    const step1 = await page.evaluate(() => ({
+      name: document.getElementById("s1-name").value,
+      phone: document.getElementById("s1-phone").value
+    }));
+    assert.strictEqual(step1.name, "张三", "第一步姓名");
+    assert.strictEqual(step1.phone, "13800001111", "第一步电话");
+    await page.click("#next1");
+    await startAutofillOnTab(sw, await getTabId(sw, page));
+    const step2 = await page.evaluate(() => ({
+      email: document.getElementById("s2-email").value,
+      intro: document.getElementById("s2-intro").value
+    }));
+    assert.strictEqual(step2.email, "zhangsan@test.com", "第二步邮箱");
+    assert.strictEqual(step2.intro, "认真负责，熟悉自动化测试。", "第二步自我评价");
+    console.log("PASS 阶段六：多步骤表单分步填充");
 
     console.log("ALL PASS: 夹具 E2E 完成");
   } finally {

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>测试夹具：多步骤表单</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 24px auto; }
+    .step { display: none; }
+    .step.active { display: block; }
+    .form-item { margin-bottom: 14px; }
+    .form-item label { display: block; margin-bottom: 4px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>多步骤表单夹具</h1>
+  <form onsubmit="return false">
+    <div class="step active" id="step1">
+      <h2>第一步：基本信息</h2>
+      <div class="form-item"><label for="s1-name">姓名</label><input id="s1-name" type="text" /></div>
+      <div class="form-item"><label for="s1-phone">电话</label><input id="s1-phone" type="tel" /></div>
+      <button type="button" id="next1">下一步</button>
+    </div>
+    <div class="step" id="step2">
+      <h2>第二步：补充信息</h2>
+      <div class="form-item"><label for="s2-email">电子邮箱</label><input id="s2-email" type="email" /></div>
+      <div class="form-item"><label for="s2-intro">自我评价</label><textarea id="s2-intro" rows="3"></textarea></div>
+    </div>
+  </form>
+  <script>
+    document.getElementById("next1").addEventListener("click", () => {
+      document.getElementById("step1").classList.remove("active");
+      document.getElementById("step2").classList.add("active");
+    });
+  </script>
+</body>
+</html>
